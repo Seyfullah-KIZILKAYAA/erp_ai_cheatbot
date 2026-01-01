@@ -1,4 +1,5 @@
 
+// Last updated: Fix syntax error and optimize query logic
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
@@ -51,39 +52,44 @@ export async function POST(req: Request) {
         const schemaDescription = await getDatabaseSchema();
 
         const systemPrompt = `
-    Sen zeki bir ERP Asistanısın.Şu anki tarih: ${new Date().toLocaleString('tr-TR')}
+    Sen zeki bir ERP Asistanısın. Şu anki tarih: ${new Date().toLocaleString('tr-TR')}
     
     ÇOK ÖNEMLİ:
-    Aşağıda sana bu veritabanındaki ** GERÇEK ve CANLI ** tablo listesini veriyorum.
+    Aşağıda sana bu veritabanındaki **GERÇEK ve CANLI** tablo listesini veriyorum.
     Sorgu oluştururken SADECE VE SADECE bu listedeki tablo isimlerini kullanabilirsin.
-    Asla kafandan "customers", "users" gibi tablo isimleri uydurma.Listede ne yazıyorsa(örn: "customer", "musteri", "cari") HARFİ HARFİNE onu kullan.
+    Asla kafandan "customers", "users" gibi tablo isimleri uydurma. Listede ne yazıyorsa (örn: "customer", "musteri", "cari") HARFİ HARFİNE onu kullan.
 
             ${schemaDescription}
 
-        GÖREVİN:
-        1. Kullanıcının sorusunu analiz et(Örn: "Müşterileri listele").
-    2. Yukarıdaki şemayı tara ve anlam olarak "müşteri" ile eşleşebilecek tabloyu bul(Örn: 'customer' tablosu varsa onu kullan, 'customers' deme).
-    3. Tablonun içindeki kolonlara bak ve "isim", "tel" gibi istenen verilere en yakın kolonları seç.
+    GÖREVİN:
+    1. Kullanıcının sorusunu analiz et (Örn: "Müşterileri listele").
+    2. Yukarıdaki şemayı tara ve anlam olarak "müşteri" ile eşleşebilecek tabloyu bul (Örn: 'customer' tablosu varsa onu kullan).
+    3. Tablonun içindeki kolonlara bak ve istenen verilere en yakın kolonları seç.
     4. SQL sorgusu yerine aşağıdaki JSON formatını üret.
 
     JSON FORMATI:
         {
-            "type": "query",
+            "type": "query", // veya sadec sayı soruluyorsa "count"
             "table": "TABLO_ADI_BURAYA_(Listeden_Aynen_Al)",
             "select": "KOLONLAR_(Listeden_Aynen_Al)"
-            // "limit": 1000  <-- EĞER kullanıcı "hepsi", "tümü", "ne varsa" derse bu satırı SİL. Hepsini getir. Varsayılan 20 olsun.
+            // "limit": 20  <-- Kullanıcı "hepsi" derse bu satırı sil. Varsayılan 20.
         }
     
-    HATA ÖNLEME ve KISITLAMALAR:
-        - SADECE basit filtreleme (where) ve sıralama (order by) yapabilirsin.
-        - ASLA 'SUM', 'COUNT', 'GROUP BY' gibi SQL fonksiyonları kullanma. Sistem bunları desteklemez.
-        - "En çok satılan" sorulursa: 'Products' (veya ürünler) tablosunu 'sales_count' (satış adedi) sütununa göre AZALAN (desc) sırala ve getir.
-        - Eğer analiz lazımsa, veriyi (limit 1000) çek, hesaplamayı sen yapıp kullanıcıya söyle.
-        - Tablo adını listeden tam eşleştir (Büyük/küçük harf duyarlı).
-        - Tablo adını listeden tam eşleştir (Büyük/küçük harf duyarlı).
+    ÖZEL DURUMLAR VE KURALLAR:
+    - **SAYI SORULARI ("Kaç tane?", "Toplam sayı ne?"):**
+      - JSON'daki "type" değerini "count" yap.
+      - Örn: { "type": "count", "table": "products" }
+      - Bu, veriyi çekmeden sadece veritabanındaki kayıt sayısını hızlıca getirir (Optimize işlem).
     
+    - **VERİ İSTEKLERİ:**
+      - JSON'daki "type" değeri "query" olsun.
+      - SADECE basit filtreleme (where) ve sıralama (order by) yapabilirsin.
+      - ASLA 'SUM', 'AVG' gibi SQL fonksiyonları select içine yazma.
+      - "En çok satılan" sorulursa: İlgili tabloyu satış adedine göre AZALAN (desc) sırala.
+      - Tablo adını listeden tam eşleştir (Büyük/küçük harf duyarlı).
+
     Eğer şemada uygun bir tablo bulamazsan:
-    Kullanıcıya "Mevcut tablolar arasında bu isteği karşılayacak bir tablo bulamadım." de.
+     Kullanıcıya "Mevcut tablolar arasında bu isteği karşılayacak bir tablo bulamadım." de.
     `;
 
         // Mesaj geçmişini doğru sırayla oluştur
@@ -101,37 +107,49 @@ export async function POST(req: Request) {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY} `
+                "Authorization": `Bearer ${GROQ_API_KEY}`
             },
             body: JSON.stringify({
                 model: "llama-3.3-70b-versatile",
                 messages: messages,
                 temperature: 0.1,
                 max_tokens: 1000
-                // response_format: { type: "json_object" } KAPALI. Çünkü chat istiyoruz.
             })
         });
 
         if (!aiResponse.ok) {
             const errData = await aiResponse.json();
-            throw new Error(`Groq API Error: ${errData.error?.message || aiResponse.statusText} `);
+            throw new Error(`Groq API Error: ${errData.error?.message || aiResponse.statusText}`);
         }
 
         const aiData = await aiResponse.json();
         const rawContent = aiData.choices[0]?.message?.content || "";
-
         let finalResponse = rawContent;
 
         // JSON Analiz
         try {
-            // Regex ile JSON bloğunu bulmaya çalış
             const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
 
             if (jsonMatch) {
                 const jsonContent = jsonMatch[0];
                 const action = JSON.parse(jsonContent);
 
-                if (action.type === 'query') {
+                // --- 1. COUNT İŞLEMİ (Optimize Sayım) ---
+                if (action.type === 'count') {
+                    console.log(`Sayım yapılıyor: Tablo=${action.table}`);
+                    // head: true -> Veriyi çekmez, sadece sayısını döner (count)
+                    const { count, error } = await supabase
+                        .from(action.table)
+                        .select('*', { count: 'exact', head: true });
+
+                    if (error) {
+                        finalResponse = `Sayım hatası: ${error.message}`;
+                    } else {
+                        finalResponse = `Veritabanında **${action.table}** tablosunda toplam **${count}** kayıt bulundu.`;
+                    }
+                }
+                // --- 2. QUERY İŞLEMİ (Veri Çekme) ---
+                else if (action.type === 'query') {
                     let query = supabase.from(action.table).select(action.select || '*');
 
                     if (action.filters && Array.isArray(action.filters)) {
@@ -149,36 +167,46 @@ export async function POST(req: Request) {
                     console.log(`Sorgu çalıştırılıyor: Tablo=${action.table}, Select=${action.select}`);
                     const { data, error } = await query;
 
-                    console.log(`Sorgu Sonucu: Hata=${error?.message}, VeriSayısı=${data?.length}`);
-
                     if (error) {
                         finalResponse = `Veritabanı hatası: ${error.message}`;
                     } else if (!data || data.length === 0) {
-                        finalResponse = `Veritabanında '${action.table}' tablosunda kayıt bulunamadı.\n\n(Teknik Detay: Tablo şu an boş görünüyor. RLS politikalarını kontrol edin.)`;
+                        finalResponse = `Aradığınız kriterlere uygun veri bulunamadı.`;
                     } else {
-                        // Özetleme isteği (bunu da metin olarak isteyelim)
+                        // Veri Context'i oluştur
+                        const rowCount = data.length;
+                        const dataContext = `
+                        SORGULANAN VERİ ÖZETİ:
+                        - Toplam Satır Sayısı: ${rowCount}
+                        - Veriler (JSON): ${JSON.stringify(data)}
+                        
+                        GÖREV:
+                        Bu veriyi kullanarak kullanıcının sorusunu yanıtla.
+                        Eğer kullanıcı liste istiyorsa maddeler halinde yaz.
+                        Eğer "kaç tane" diye sormuşsa YUKARIDAKİ 'Toplam Satır Sayısı'nı baz al (${rowCount} adet). ASLA KAFANDAN SAYI UYDURMA.
+                        `;
+
+                        // Özetleme isteği
                         const summaryRes = await fetch(GROQ_API_URL, {
                             method: "POST",
                             headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
                             body: JSON.stringify({
                                 model: "llama-3.3-70b-versatile",
                                 messages: [
-                                    { role: "system", content: "Sen yardımsever bir asistansın. Verilen veriyi kullanıcıya özetle." },
-                                    { role: "user", content: `Veri: ${JSON.stringify(data)}. Kullanıcı sorusu: ${message}` }
+                                    { role: "system", content: "Sen yardımsever bir asistansın. Verilen kesin veriye sadık kal." },
+                                    { role: "user", content: `${dataContext}\n\nKullanıcı Sorusu: ${message}` }
                                 ]
                             })
                         });
                         const summaryData = await summaryRes.json();
-                        finalResponse = summaryData.choices[0]?.message?.content || "Özetlenemedi.";
+                        finalResponse = summaryData.choices[0]?.message?.content || "Cevap üretilemedi.";
                     }
                 } else {
-                    // JSON ama query değil -> İçeriği çıkar
+                    // JSON ama query/count değil
                     if (action.message) finalResponse = action.message;
                     else if (action.content) finalResponse = action.content;
-                    else if (action.answer) finalResponse = action.answer;
-                    // Eğer uygun alan yoksa olduğu gibi kalsın
                 }
             }
+
         } catch (e) {
             // JSON değilse text olarak kalır
         }
