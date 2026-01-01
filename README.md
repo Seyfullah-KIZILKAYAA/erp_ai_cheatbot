@@ -1,38 +1,73 @@
-# erp_ai_cheatbot
+# 🤖 ERP AI Chatbot
 
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+An intelligent ERP Assistant that allows you to query your business data using natural language. Built with Next.js, Supabase, and the ultra-fast Groq AI API.
 
-## Getting Started
+![Project Status](https://img.shields.io/badge/Status-Active-success)
+![Next.js](https://img.shields.io/badge/Next.js-15-black)
+![Supabase](https://img.shields.io/badge/Supabase-Database-green)
+![Groq](https://img.shields.io/badge/AI-Groq%20(Llama%203.3)-orange)
 
-First, run the development server:
+## 🌟 Features
 
+- **💬 Natural Language Querying**: Ask questions like "Who are my top customers?" or "Show me sales from last week" in plain Turkish (or English).
+- **🚀 Ultra-Fast AI**: Powered by Groq's high-speed inference engine using the **Llama 3.3 70B** model.
+- **🔄 Dynamic Schema Awareness**: The bot intelligently inspects your database schema to understand available tables and columns automatically.
+- **🛡️ Secure Database Access**: Directly interacts with Supabase to fetch real-time data securely.
+- **📊 Smart Summaries**: Automatically analyzes raw data and provides concise, human-readable summaries.
+
+## 🛠️ Tech Stack
+
+- **Frontend**: Next.js 15, React 19, TypeScript
+- **Styling**: Vanilla CSS (Modern & Responsive), Framer Motion (Animations), Lucide React (Icons)
+- **Backend/Database**: Supabase (PostgreSQL)
+- **AI/LLM**: Groq API (Llama-3.3-70b-versatile)
+
+## 🚀 Getting Started
+
+Follow these steps to set up the project locally.
+
+### 1. Clone the repository
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/Seyfullah-KIZILKAYAA/erp_ai_cheatbot.git
+cd erp_ai_cheatbot
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Install Dependencies
+```bash
+npm install
+# or
+yarn install
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 3. Environment Configuration
+Create a `.env.local` file in the root directory and add your keys:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+GROQ_API_KEY=your_groq_api_key
+```
 
-## Learn More
+### 4. Database Setup
+This project requires specific tables and functions in Supabase. Run the SQL scripts provided in the `sql/` folder (or root) in your Supabase SQL Editor:
+- `setup.sql` (Creates base tables)
+- `setup_schema_introspection.sql` (Enables the AI to read DB structure)
+- `enable_all_read_access.sql` (Configures RLS policies)
 
-To learn more about Next.js, take a look at the following resources:
+### 5. Run the Application
+```bash
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 💡 How It Works
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+1. **User asks a question**: "Lastik satışları ne durumda?"
+2. **AI Analysis**: The system sends the schema + question to Llama 3.3 (via Groq).
+3. **Query Generation**: The AI generates a structured JSON query object instead of raw SQL code for safety.
+4. **Execution**: The server executes the query against Supabase.
+5. **Response**: The AI reads the data and formulates a helpful conversational response.
 
-## Deploy on Vercel
+## 📄 License
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This project is open-source and available for educational purposes.
