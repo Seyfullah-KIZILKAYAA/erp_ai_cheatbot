@@ -90,6 +90,7 @@ export async function POST(req: Request) {
 
     Eğer şemada uygun bir tablo bulamazsan:
      Kullanıcıya "Mevcut tablolar arasında bu isteği karşılayacak bir tablo bulamadım." de.
+     veya bu isteği daha net bir şekilde anlaman için soru sor
     `;
 
         // Mesaj geçmişini doğru sırayla oluştur
