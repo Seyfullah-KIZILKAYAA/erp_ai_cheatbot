@@ -1,5 +1,7 @@
 
 // Last updated: Fix syntax error and optimize query logic
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 
@@ -71,7 +73,8 @@ export async function POST(req: Request) {
         {
             "type": "query", // veya sadec sayı soruluyorsa "count"
             "table": "TABLO_ADI_BURAYA_(Listeden_Aynen_Al)",
-            "select": "KOLONLAR_(Listeden_Aynen_Al)"
+            "select": "KOLONLAR_(Listeden_Aynen_Al)",
+            "display": "table" // veya "chart" (Eğer zaman/sayı grafiği isteniyorsa) veya "stat" (tek sayı ise)
             // "limit": 20  <-- Kullanıcı "hepsi" derse bu satırı sil. Varsayılan 20.
         }
     
@@ -126,6 +129,8 @@ export async function POST(req: Request) {
         const aiData = await aiResponse.json();
         const rawContent = aiData.choices[0]?.message?.content || "";
         let finalResponse = rawContent;
+        let responseData = null; // Frontend'e gönderilecek ham veri
+        let uiType = null;      // 'table', 'chart', 'stat'
 
         // JSON Analiz
         try {
@@ -147,11 +152,13 @@ export async function POST(req: Request) {
                         finalResponse = `Sayım hatası: ${error.message}`;
                     } else {
                         finalResponse = `Veritabanında **${action.table}** tablosunda toplam **${count}** kayıt bulundu.`;
+                        responseData = { count };
+                        uiType = 'stat';
                     }
                 }
                 // --- 2. QUERY İŞLEMİ (Veri Çekme) ---
                 else if (action.type === 'query') {
-                    let query = supabase.from(action.table).select(action.select || '*');
+                    let query: any = supabase.from(action.table).select(action.select || '*');
 
                     if (action.filters && Array.isArray(action.filters)) {
                         action.filters.forEach((f: any) => {
@@ -173,17 +180,21 @@ export async function POST(req: Request) {
                     } else if (!data || data.length === 0) {
                         finalResponse = `Aradığınız kriterlere uygun veri bulunamadı.`;
                     } else {
+                        // Başarılı veri
+                        responseData = data;
+                        uiType = action.display || 'table'; // Bot tablom mu grafik mi istedi?
+
                         // Veri Context'i oluştur
                         const rowCount = data.length;
                         const dataContext = `
                         SORGULANAN VERİ ÖZETİ:
                         - Toplam Satır Sayısı: ${rowCount}
-                        - Veriler (JSON): ${JSON.stringify(data)}
+                        - Veriler (JSON): ${JSON.stringify(data).slice(0, 2000)}... (kısaltıldı)
                         
                         GÖREV:
                         Bu veriyi kullanarak kullanıcının sorusunu yanıtla.
-                        Eğer kullanıcı liste istiyorsa maddeler halinde yaz.
-                        Eğer "kaç tane" diye sormuşsa YUKARIDAKİ 'Toplam Satır Sayısı'nı baz al (${rowCount} adet). ASLA KAFANDAN SAYI UYDURMA.
+                        Kullanıcıya sadece kısa bir özet geç, çünkü zaten veriyi aşağıda TABLO/GRAFİK olarak göstereceğim.
+                        Ayrıntılı listeleme yapma, "Aşağıdaki tabloda görebilirsiniz" de.
                         `;
 
                         // Özetleme isteği
@@ -193,13 +204,13 @@ export async function POST(req: Request) {
                             body: JSON.stringify({
                                 model: "llama-3.3-70b-versatile",
                                 messages: [
-                                    { role: "system", content: "Sen yardımsever bir asistansın. Verilen kesin veriye sadık kal." },
+                                    { role: "system", content: "Sen yardımsever bir asistansın. Verilen veriye göre kısa, nazik bir özet yaz. Detaylara girme." },
                                     { role: "user", content: `${dataContext}\n\nKullanıcı Sorusu: ${message}` }
                                 ]
                             })
                         });
                         const summaryData = await summaryRes.json();
-                        finalResponse = summaryData.choices[0]?.message?.content || "Cevap üretilemedi.";
+                        finalResponse = summaryData.choices[0]?.message?.content || "Veriler getirildi.";
                     }
                 } else {
                     // JSON ama query/count değil
@@ -212,7 +223,12 @@ export async function POST(req: Request) {
             // JSON değilse text olarak kalır
         }
 
-        return NextResponse.json({ role: "bot", content: finalResponse });
+        return NextResponse.json({
+            role: "bot",
+            content: finalResponse,
+            data: responseData,
+            ui_component: uiType
+        });
 
     } catch (error: any) {
         console.error("API Error:", error);

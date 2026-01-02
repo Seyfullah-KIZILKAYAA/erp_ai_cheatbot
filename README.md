@@ -10,6 +10,8 @@ An intelligent ERP Assistant that allows you to query your business data using n
 ## 🌟 Features
 
 - **💬 Natural Language Querying**: Ask questions like "Who are my top customers?" or "Show me sales from last week" in plain Turkish (or English).
+- **📈 Adaptive UI (Generative UI)**: Automatically renders data as **Tables**, **Charts**, or **Stat Cards** depending on the context (e.g., "Show chart" triggers a visualization).
+- **🎙️ Voice Interaction**: Full **Speech-to-Text** and **Text-to-Speech** support. Talk to your ERP and hear it talk back!
 - **🚀 Ultra-Fast AI**: Powered by Groq's high-speed inference engine using the **Llama 3.3 70B** model.
 - **🔄 Dynamic Schema Awareness**: The bot intelligently inspects your database schema to understand available tables and columns automatically.
 - **🛡️ Secure Database Access**: Directly interacts with Supabase to fetch real-time data securely.
