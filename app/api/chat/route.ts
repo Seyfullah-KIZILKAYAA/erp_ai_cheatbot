@@ -1,102 +1,72 @@
-
-// Last updated: Fix syntax error and optimize query logic
+// Last updated: Add Odoo ERP Integration
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-
-// Supabase Setup
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const supabase = createClient(supabaseUrl, supabaseKey);
+import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
 
 // Groq API Config
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 async function getDatabaseSchema() {
-    try {
-        // Supabase'den dinamik olarak şema bilgisini çekiyoruz
-        // NOT: Bunun çalışması için 'get_schema_info' adlı RPC fonksiyonunun SQL Editor'de çalıştırılmış olması lazım.
-        const { data, error } = await supabase.rpc('get_schema_info');
-
-        if (error || !data) {
-            console.warn("Schema introspection failed (RPC not found or error):", error);
-            // Fallback (Yedek) şema - RPC yoksa en azından bildiklerimizi kullanalım
-            return `
-    TABLOLAR (Dinamik şema çekilemedi, varsayılanlar):
-    1. products (id, name, stock_quantity, sales_count, price, category)
-    2. sales (id, product_id, quantity, sale_date, total_amount)
+    // Odoo Modelleri ve Alanları (AI'ın bilmesi gerekenler)
+    return `
+    MEVCUT ERP TABLOLARI (Odoo):
+    1. res.partner (Müşteriler/Contacts)
+       - Alanlar: name, email, phone, city, country_id, is_company
     
-    UYARI: Veritabanı yapısını tam öğrenmek için 'setup_schema_introspection.sql' dosyasındaki kodu Supabase SQL Editor'de çalıştırın.
-            `;
-        }
-
-        // Gelen JSON verisini okunabilir bir metne dönüştür
-        let schemaText = "VERİTABANI ŞEMASI (Canlı Veri):\n";
-        data.forEach((table: any, index: number) => {
-            schemaText += `${index + 1}. ${table.table_name} (${table.columns ? table.columns.join(', ') : ''})\n`;
-        });
-
-        return schemaText;
-
-    } catch (e) {
-        return "Şema bilgisi alınamadı.";
-    }
+    2. sale.order (Satış Siparişleri)
+       - Alanlar: name, partner_id, date_order, amount_total, state (draft, sale, done)
+    
+    3. product.product (Ürünler)
+       - Alanlar: name, lst_price (satış fiyatı), qty_available (stok), default_code (kod)
+       
+    NOT: Tablo isimlerini (res.partner, sale.order vb.) tam olarak bu şekilde kullan.
+    `;
 }
 
-// ... POST handler starts here ...
 export async function POST(req: Request) {
     try {
         const { message, history } = await req.json();
-        // ... (API Key check remains same) ...
 
         const schemaDescription = await getDatabaseSchema();
 
         const systemPrompt = `
-    Sen zeki bir ERP Asistanısın. Şu anki tarih: ${new Date().toLocaleString('tr-TR')}
-    
-    ÇOK ÖNEMLİ:
-    Aşağıda sana bu veritabanındaki **GERÇEK ve CANLI** tablo listesini veriyorum.
-    Sorgu oluştururken SADECE VE SADECE bu listedeki tablo isimlerini kullanabilirsin.
-    Asla kafandan "customers", "users" gibi tablo isimleri uydurma. Listede ne yazıyorsa (örn: "customer", "musteri", "cari") HARFİ HARFİNE onu kullan.
+        Sen uzman bir Odoo ERP Asistanısın. Şu anki tarih: ${new Date().toLocaleString('tr-TR')}
+        
+        GÖREVİN:
+        Kullanıcının sorularını yanıtlamak için Odoo veritabanından veri çekmelisin.
+        Aşağıdaki şemayı kullan:
+        
+        ${schemaDescription}
 
-            ${schemaDescription}
+        KULLANIM KURALLARI:
+        1. Kullanıcının sorusunu analiz et.
+        2. Eğer veri gerekiyorsa, aşağıdaki JSON formatında sorgu üret.
+        3. Tablo adlarını ve alanları mutlaka şemadan al.
 
-    GÖREVİN:
-    1. Kullanıcının sorusunu analiz et (Örn: "Müşterileri listele").
-    2. Yukarıdaki şemayı tara ve anlam olarak "müşteri" ile eşleşebilecek tabloyu bul (Örn: 'customer' tablosu varsa onu kullan).
-    3. Tablonun içindeki kolonlara bak ve istenen verilere en yakın kolonları seç.
-    4. SQL sorgusu yerine aşağıdaki JSON formatını üret.
-
-    JSON FORMATI:
+        JSON FORMATI:
         {
-            "type": "query", // veya sadec sayı soruluyorsa "count"
-            "table": "TABLO_ADI_BURAYA_(Listeden_Aynen_Al)",
-            "select": "KOLONLAR_(Listeden_Aynen_Al)",
-            "display": "table" // veya "chart" (Eğer zaman/sayı grafiği isteniyorsa) veya "stat" (tek sayı ise)
-            // "limit": 20  <-- Kullanıcı "hepsi" derse bu satırı sil. Varsayılan 20.
+            "type": "query", // veya sayım için "count"
+            "table": "model_adi" (örn: res.partner),
+            "filters": [ // Odoo domain mantığına çevrilecek filtreler
+                { "column": "name", "operator": "ilike", "value": "Ahmet" },
+                { "column": "amount_total", "operator": ">", "value": 1000 }
+            ],
+            "fields": ["name", "email"], // İstenen alanlar
+            "limit": 10,
+            "display": "table" // veya "stat"
         }
-    
-    ÖZEL DURUMLAR VE KURALLAR:
-    - **SAYI SORULARI ("Kaç tane?", "Toplam sayı ne?"):**
-      - JSON'daki "type" değerini "count" yap.
-      - Örn: { "type": "count", "table": "products" }
-      - Bu, veriyi çekmeden sadece veritabanındaki kayıt sayısını hızlıca getirir (Optimize işlem).
-    
-    - **VERİ İSTEKLERİ:**
-      - JSON'daki "type" değeri "query" olsun.
-      - SADECE basit filtreleme (where) ve sıralama (order by) yapabilirsin.
-      - ASLA 'SUM', 'AVG' gibi SQL fonksiyonları select içine yazma.
-      - "En çok satılan" sorulursa: İlgili tabloyu satış adedine göre AZALAN (desc) sırala.
-      - Tablo adını listeden tam eşleştir (Büyük/küçük harf duyarlı).
+        
+        FİLTRE OPERATÖRLERİ:
+        - Eşit: "eq" (=)
+        - İçerir: "ilike" (case insensitive search)
+        - Büyük: "gt" (>)
+        - Küçük: "lt" (<)
+        
+        Eğer sohbet devam ediyorsa ve veri gerekmiyorsa normal cevap ver (JSON döndürme).
+        `;
 
-    Eğer şemada uygun bir tablo bulamazsan:
-     Kullanıcıya "Mevcut tablolar arasında bu isteği karşılayacak bir tablo bulamadım." de.
-     veya bu isteği daha net bir şekilde anlaman için soru sor
-    `;
-
-        // Mesaj geçmişini doğru sırayla oluştur
         const messages = [
             { role: "system", content: systemPrompt },
             ...history.map((msg: any) => ({
@@ -106,7 +76,6 @@ export async function POST(req: Request) {
             { role: "user", content: message }
         ];
 
-        // Groq API İsteği
         const aiResponse = await fetch(GROQ_API_URL, {
             method: "POST",
             headers: {
@@ -129,10 +98,9 @@ export async function POST(req: Request) {
         const aiData = await aiResponse.json();
         const rawContent = aiData.choices[0]?.message?.content || "";
         let finalResponse = rawContent;
-        let responseData = null; // Frontend'e gönderilecek ham veri
-        let uiType = null;      // 'table', 'chart', 'stat'
+        let responseData = null;
+        let uiType = null;
 
-        // JSON Analiz
         try {
             const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
 
@@ -140,87 +108,66 @@ export async function POST(req: Request) {
                 const jsonContent = jsonMatch[0];
                 const action = JSON.parse(jsonContent);
 
-                // --- 1. COUNT İŞLEMİ (Optimize Sayım) ---
+                // Odoo Domain Dönüştürücü
+                const buildOdooDomain = (filters: any[]) => {
+                    if (!filters) return [];
+                    return filters.map((f: any) => {
+                        if (f.operator === 'ilike') return [f.column, 'ilike', f.value];
+                        if (f.operator === 'eq') return [f.column, '=', f.value];
+                        if (f.operator === 'gt') return [f.column, '>', f.value];
+                        if (f.operator === 'lt') return [f.column, '<', f.value];
+                        return [f.column, '=', f.value];
+                    });
+                };
+
                 if (action.type === 'count') {
-                    console.log(`Sayım yapılıyor: Tablo=${action.table}`);
-                    // head: true -> Veriyi çekmez, sadece sayısını döner (count)
-                    const { count, error } = await supabase
-                        .from(action.table)
-                        .select('*', { count: 'exact', head: true });
+                    const domain = buildOdooDomain(action.filters);
+                    console.log(`Odoo Count: ${action.table}`, domain);
+                    const count = await countOdoo(action.table, domain);
 
-                    if (error) {
-                        finalResponse = `Sayım hatası: ${error.message}`;
-                    } else {
-                        finalResponse = `Veritabanında **${action.table}** tablosunda toplam **${count}** kayıt bulundu.`;
-                        responseData = { count };
-                        uiType = 'stat';
-                    }
+                    finalResponse = `Toplam kayıt sayısı: **${count}**`;
+                    responseData = { count };
+                    uiType = 'stat';
                 }
-                // --- 2. QUERY İŞLEMİ (Veri Çekme) ---
                 else if (action.type === 'query') {
-                    let query: any = supabase.from(action.table).select(action.select || '*');
+                    const domain = buildOdooDomain(action.filters);
+                    const fields = action.fields || ['name'];
 
-                    if (action.filters && Array.isArray(action.filters)) {
-                        action.filters.forEach((f: any) => {
-                            if (f.operator === 'eq') query = query.eq(f.column, f.value);
-                            if (f.operator === 'lt') query = query.lt(f.column, f.value);
-                            if (f.operator === 'gt') query = query.gt(f.column, f.value);
-                            if (f.operator === 'ilike') query = query.ilike(f.column, `%${f.value}%`);
-                        });
-                    }
+                    console.log(`Odoo Search: ${action.table}`, domain);
+                    const data = await searchReadOdoo(action.table, domain, fields, action.limit || 10);
 
-                    if (action.limit) query = query.limit(action.limit);
-                    if (action.order) query = query.order(action.order, { ascending: action.ascending ?? false });
-
-                    console.log(`Sorgu çalıştırılıyor: Tablo=${action.table}, Select=${action.select}`);
-                    const { data, error } = await query;
-
-                    if (error) {
-                        finalResponse = `Veritabanı hatası: ${error.message}`;
-                    } else if (!data || data.length === 0) {
-                        finalResponse = `Aradığınız kriterlere uygun veri bulunamadı.`;
+                    if (!data || data.length === 0) {
+                        finalResponse = "Kriterlere uygun kayıt bulunamadı.";
                     } else {
-                        // Başarılı veri
                         responseData = data;
-                        uiType = action.display || 'table'; // Bot tablom mu grafik mi istedi?
+                        uiType = action.display || 'table';
 
-                        // Veri Context'i oluştur
-                        const rowCount = data.length;
+                        // Özet oluştur
                         const dataContext = `
-                        SORGULANAN VERİ ÖZETİ:
-                        - Toplam Satır Sayısı: ${rowCount}
-                        - Veriler (JSON): ${JSON.stringify(data).slice(0, 2000)}... (kısaltıldı)
+                        VERİLER: ${JSON.stringify(data).slice(0, 1500)}...
                         
-                        GÖREV:
-                        Bu veriyi kullanarak kullanıcının sorusunu yanıtla.
-                        Kullanıcıya sadece kısa bir özet geç, çünkü zaten veriyi aşağıda TABLO/GRAFİK olarak göstereceğim.
-                        Ayrıntılı listeleme yapma, "Aşağıdaki tabloda görebilirsiniz" de.
+                        Kullanıcıya bu veriyi özetle. Tablo zaten gösterilecek.
                         `;
 
-                        // Özetleme isteği
                         const summaryRes = await fetch(GROQ_API_URL, {
                             method: "POST",
                             headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
                             body: JSON.stringify({
                                 model: "llama-3.3-70b-versatile",
                                 messages: [
-                                    { role: "system", content: "Sen yardımsever bir asistansın. Verilen veriye göre kısa, nazik bir özet yaz. Detaylara girme." },
-                                    { role: "user", content: `${dataContext}\n\nKullanıcı Sorusu: ${message}` }
+                                    { role: "system", content: "Kısa ve öz bir özet yap." },
+                                    { role: "user", content: `${dataContext}\n\nSoru: ${message}` }
                                 ]
                             })
                         });
                         const summaryData = await summaryRes.json();
                         finalResponse = summaryData.choices[0]?.message?.content || "Veriler getirildi.";
                     }
-                } else {
-                    // JSON ama query/count değil
-                    if (action.message) finalResponse = action.message;
-                    else if (action.content) finalResponse = action.content;
                 }
             }
-
-        } catch (e) {
-            // JSON değilse text olarak kalır
+        } catch (e: any) {
+            console.error("Action Processing Error:", e);
+            // Hata olsa bile metni döndür
         }
 
         return NextResponse.json({
