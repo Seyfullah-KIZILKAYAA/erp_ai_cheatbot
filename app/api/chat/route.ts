@@ -1,6 +1,3 @@
-// Last updated: Add Odoo ERP Integration
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import { NextResponse } from "next/server";
 import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
 
@@ -8,8 +5,10 @@ import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-async function getDatabaseSchema() {
-    // Odoo Modelleri ve Alanları (AI'ın bilmesi gerekenler)
+/**
+ * Returns the ERP schema for the AI to understand available models and fields.
+ */
+function getDatabaseSchema(): string {
     return `
     MEVCUT ERP TABLOLARI (Odoo):
     1. res.partner (Müşteriler/Contacts)
@@ -25,11 +24,26 @@ async function getDatabaseSchema() {
     `;
 }
 
+/**
+ * Converts AI-generated filters to Odoo Domain format.
+ */
+const buildOdooDomain = (filters: any[]) => {
+    if (!filters) return [];
+    return filters.map((f: any) => {
+        switch (f.operator) {
+            case 'ilike': return [f.column, 'ilike', f.value];
+            case 'eq': return [f.column, '=', f.value];
+            case 'gt': return [f.column, '>', f.value];
+            case 'lt': return [f.column, '<', f.value];
+            default: return [f.column, '=', f.value];
+        }
+    });
+};
+
 export async function POST(req: Request) {
     try {
         const { message, history } = await req.json();
-
-        const schemaDescription = await getDatabaseSchema();
+        const schemaDescription = getDatabaseSchema();
 
         const systemPrompt = `
         Sen uzman bir Odoo ERP Asistanısın. Şu anki tarih: ${new Date().toLocaleString('tr-TR')}
@@ -47,22 +61,17 @@ export async function POST(req: Request) {
 
         JSON FORMATI:
         {
-            "type": "query", // veya sayım için "count"
-            "table": "model_adi" (örn: res.partner),
-            "filters": [ // Odoo domain mantığına çevrilecek filtreler
-                { "column": "name", "operator": "ilike", "value": "Ahmet" },
-                { "column": "amount_total", "operator": ">", "value": 1000 }
+            "type": "query",
+            "table": "model_adi",
+            "filters": [
+                { "column": "name", "operator": "ilike", "value": "Ahmet" }
             ],
-            "fields": ["name", "email"], // İstenen alanlar
+            "fields": ["name", "email"],
             "limit": 10,
-            "display": "table" // veya "stat"
+            "display": "table" 
         }
         
-        FİLTRE OPERATÖRLERİ:
-        - Eşit: "eq" (=)
-        - İçerir: "ilike" (case insensitive search)
-        - Büyük: "gt" (>)
-        - Küçük: "lt" (<)
+        FİLTRE OPERATÖRLERİ: eq (=), ilike (içerir), gt (>), lt (<)
         
         Eğer sohbet devam ediyorsa ve veri gerekmiyorsa normal cevap ver (JSON döndürme).
         `;
@@ -84,7 +93,7 @@ export async function POST(req: Request) {
             },
             body: JSON.stringify({
                 model: "llama-3.3-70b-versatile",
-                messages: messages,
+                messages,
                 temperature: 0.1,
                 max_tokens: 1000
             })
@@ -97,34 +106,19 @@ export async function POST(req: Request) {
 
         const aiData = await aiResponse.json();
         const rawContent = aiData.choices[0]?.message?.content || "";
+
         let finalResponse = rawContent;
         let responseData = null;
         let uiType = null;
 
         try {
             const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-
             if (jsonMatch) {
-                const jsonContent = jsonMatch[0];
-                const action = JSON.parse(jsonContent);
-
-                // Odoo Domain Dönüştürücü
-                const buildOdooDomain = (filters: any[]) => {
-                    if (!filters) return [];
-                    return filters.map((f: any) => {
-                        if (f.operator === 'ilike') return [f.column, 'ilike', f.value];
-                        if (f.operator === 'eq') return [f.column, '=', f.value];
-                        if (f.operator === 'gt') return [f.column, '>', f.value];
-                        if (f.operator === 'lt') return [f.column, '<', f.value];
-                        return [f.column, '=', f.value];
-                    });
-                };
+                const action = JSON.parse(jsonMatch[0]);
 
                 if (action.type === 'count') {
                     const domain = buildOdooDomain(action.filters);
-                    console.log(`Odoo Count: ${action.table}`, domain);
                     const count = await countOdoo(action.table, domain);
-
                     finalResponse = `Toplam kayıt sayısı: **${count}**`;
                     responseData = { count };
                     uiType = 'stat';
@@ -132,8 +126,6 @@ export async function POST(req: Request) {
                 else if (action.type === 'query') {
                     const domain = buildOdooDomain(action.filters);
                     const fields = action.fields || ['name'];
-
-                    console.log(`Odoo Search: ${action.table}`, domain);
                     const data = await searchReadOdoo(action.table, domain, fields, action.limit || 10);
 
                     if (!data || data.length === 0) {
@@ -142,21 +134,15 @@ export async function POST(req: Request) {
                         responseData = data;
                         uiType = action.display || 'table';
 
-                        // Özet oluştur
-                        const dataContext = `
-                        VERİLER: ${JSON.stringify(data).slice(0, 1500)}...
-                        
-                        Kullanıcıya bu veriyi özetle. Tablo zaten gösterilecek.
-                        `;
-
+                        // Summarize results for the user
                         const summaryRes = await fetch(GROQ_API_URL, {
                             method: "POST",
                             headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
                             body: JSON.stringify({
                                 model: "llama-3.3-70b-versatile",
                                 messages: [
-                                    { role: "system", content: "Kısa ve öz bir özet yap." },
-                                    { role: "user", content: `${dataContext}\n\nSoru: ${message}` }
+                                    { role: "system", content: "Gelen veriyi kısa ve öz şekilde kullanıcıya açıkla." },
+                                    { role: "user", content: `VERİLER: ${JSON.stringify(data).slice(0, 1500)}\n\nSoru: ${message}` }
                                 ]
                             })
                         });
@@ -165,9 +151,8 @@ export async function POST(req: Request) {
                     }
                 }
             }
-        } catch (e: any) {
+        } catch (e) {
             console.error("Action Processing Error:", e);
-            // Hata olsa bile metni döndür
         }
 
         return NextResponse.json({
