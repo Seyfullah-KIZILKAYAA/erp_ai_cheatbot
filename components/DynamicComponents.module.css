@@ -1,10 +1,30 @@
 .dynamicWidget {
-  margin-top: 12px;
+  margin-top: 10px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   overflow: hidden;
   font-size: 0.9rem;
+}
+
+.downloadButton {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background-color: var(--secondary);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.downloadButton:hover {
+    background-color: var(--primary);
+    color: white;
+    border-color: var(--primary);
 }
 
 .tableWrapper {

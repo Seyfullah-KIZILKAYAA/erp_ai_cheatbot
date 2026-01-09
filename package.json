@@ -9,13 +9,20 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.87.0",
+    "clsx": "^2.1.1",
+    "dotenv": "^17.2.3",
     "framer-motion": "^12.23.25",
+    "html-to-image": "^1.11.13",
+    "jspdf": "^4.0.0",
+    "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.556.0",
     "next": "16.0.7",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "recharts": "^3.6.0",
+    "xlsx": "^0.18.5",
     "xmlrpc": "^1.3.2"
   },
   "devDependencies": {

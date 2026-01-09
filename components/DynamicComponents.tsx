@@ -5,6 +5,12 @@
 import React from 'react';
 import styles from './DynamicComponents.module.css';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Download, FileSpreadsheet, FileText } from 'lucide-react';
+import { toPng } from 'html-to-image';
+import { useRef } from 'react';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface DynamicComponentProps {
     type: 'table' | 'chart' | 'stat';
@@ -12,7 +18,76 @@ interface DynamicComponentProps {
 }
 
 export default function DynamicWidget({ type, data }: DynamicComponentProps) {
+    const chartRef = useRef<HTMLDivElement>(null);
+
     if (!data) return null;
+
+    const downloadTableAsCSV = () => {
+        if (!Array.isArray(data) || data.length === 0) return;
+
+        const headers = Object.keys(data[0]);
+        const csvContent = [
+            headers.join(','),
+            ...data.map(row => headers.map(h => {
+                const val = row[h];
+                // Handle special cases and escaping
+                const formatted = type === 'table' ? formatCell(val) : val;
+                return `"${String(formatted).replace(/"/g, '""')}"`;
+            }).join(','))
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        if (link.download !== undefined) {
+            const url = URL.createObjectURL(blob);
+            link.setAttribute('href', url);
+            link.setAttribute('download', 'tablo_verisi.csv');
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    };
+
+    const downloadTableAsExcel = () => {
+        if (!Array.isArray(data) || data.length === 0) return;
+
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Data");
+        XLSX.writeFile(workbook, "tablo_verisi.xlsx");
+    };
+
+    const downloadTableAsPDF = () => {
+        if (!Array.isArray(data) || data.length === 0) return;
+
+        const doc = new jsPDF();
+        const headers = Object.keys(data[0]);
+        const body = data.map(row => headers.map(h => formatCell(row[h])));
+
+        doc.text("Tablo Verisi", 14, 15);
+        autoTable(doc, {
+            head: [headers],
+            body: body,
+            startY: 20
+        });
+
+        doc.save("tablo_verisi.pdf");
+    };
+
+    const downloadChartAsImage = async () => {
+        if (chartRef.current) {
+            try {
+                const dataUrl = await toPng(chartRef.current, { cacheBust: true, backgroundColor: '#1f2937' });
+                const link = document.createElement('a');
+                link.download = 'grafik.png';
+                link.href = dataUrl;
+                link.click();
+            } catch (err) {
+                console.error('Chart download error:', err);
+            }
+        }
+    };
 
     // --- STAT CARD ---
     if (type === 'stat') {
@@ -35,6 +110,17 @@ export default function DynamicWidget({ type, data }: DynamicComponentProps) {
 
         return (
             <div className={styles.dynamicWidget}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginBottom: '8px' }}>
+                    <button onClick={downloadTableAsCSV} className={styles.downloadButton} title="CSV İndir">
+                        <Download size={16} /> <span>CSV</span>
+                    </button>
+                    <button onClick={downloadTableAsExcel} className={styles.downloadButton} title="Excel İndir">
+                        <FileSpreadsheet size={16} /> <span>Excel</span>
+                    </button>
+                    <button onClick={downloadTableAsPDF} className={styles.downloadButton} title="PDF İndir">
+                        <FileText size={16} /> <span>PDF</span>
+                    </button>
+                </div>
                 <div className={styles.tableWrapper}>
                     <table className={styles.table}>
                         <thead>
@@ -74,7 +160,12 @@ export default function DynamicWidget({ type, data }: DynamicComponentProps) {
 
         return (
             <div className={styles.dynamicWidget}>
-                <div className={styles.chartContainer}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                    <button onClick={downloadChartAsImage} className={styles.downloadButton} title="Grafiği İndir">
+                        <Download size={16} /> <span>Grafik İndir</span>
+                    </button>
+                </div>
+                <div className={styles.chartContainer} ref={chartRef}>
                     <ResponsiveContainer width="100%" height="100%">
                         <BarChart data={data}>
                             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
@@ -105,6 +196,9 @@ function formatHeader(key: string) {
 
 function formatCell(value: any) {
     if (value === null || value === undefined) return '-';
+    if (Array.isArray(value) && value.length === 2 && typeof value[0] === 'number') {
+        return value[1]; // Odoo [id, name] format
+    }
     if (typeof value === 'boolean') return value ? '✅' : '❌';
     if (value instanceof Date) return value.toLocaleDateString('tr-TR');
     if (typeof value === 'string' && value.match(/^\d{4}-\d{2}-\d{2}/)) {

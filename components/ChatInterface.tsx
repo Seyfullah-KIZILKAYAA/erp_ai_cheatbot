@@ -2,7 +2,9 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu } from 'lucide-react'
+import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText, Download } from 'lucide-react'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 import styles from './ChatInterface.module.css'
 import DynamicWidget from './DynamicComponents'
 
@@ -176,6 +178,69 @@ export default function ChatInterface() {
         window.speechSynthesis.speak(utterance);
     }
 
+    const generateReport = () => {
+        const doc = new jsPDF();
+
+        // Font setup (basic support for Turkish characters might need a custom font, 
+        // using standard font for now, might have issues with some chars)
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(20);
+        doc.text("ERP AI Asistanı - Sohbet Raporu", 14, 22);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.text(`Tarih: ${new Date().toLocaleDateString('tr-TR')}`, 14, 30);
+
+        let yPos = 40;
+
+        messages.forEach((msg, index) => {
+            if (yPos > 270) {
+                doc.addPage();
+                yPos = 20;
+            }
+
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(11);
+            doc.setTextColor(msg.role === 'user' ? '#2563eb' : '#000000');
+            const role = msg.role === 'user' ? 'Kullanıcı:' : 'Asistan:';
+            doc.text(role, 14, yPos);
+            yPos += 7;
+
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(10);
+            doc.setTextColor('#333333');
+
+            // Text wrapping
+            const textLines = doc.splitTextToSize(msg.content, 180);
+            doc.text(textLines, 14, yPos);
+            yPos += (textLines.length * 5) + 5;
+
+            // If there is table data
+            if (msg.role === 'bot' && msg.ui_component === 'table' && msg.data && Array.isArray(msg.data)) {
+                const headers = Object.keys(msg.data[0]);
+                const body = msg.data.map((row: any) => headers.map(h => {
+                    const val = row[h];
+                    if (typeof val === 'object' && val !== null) return JSON.stringify(val);
+                    return String(val);
+                }));
+
+                autoTable(doc, {
+                    startY: yPos,
+                    head: [headers],
+                    body: body,
+                    theme: 'striped',
+                    styles: { fontSize: 8, font: 'helvetica' },
+                    headStyles: { fillColor: [41, 128, 185] }
+                });
+
+                // autoTable updates lastAutoTable.finalY
+                yPos = (doc as any).lastAutoTable.finalY + 10;
+            }
+        });
+
+        doc.save(`ERP_Rapor_${Date.now()}.pdf`);
+    };
+
     const handleSendMessage = async (e: React.FormEvent | null, textOverride?: string) => {
         if (e) e.preventDefault()
         const finalContent = textOverride || inputValue
@@ -280,6 +345,13 @@ export default function ChatInterface() {
                     </div>
 
                     <div className={styles.headerActions}>
+                        <button
+                            onClick={generateReport}
+                            className={styles.actionButton}
+                            title="Rapor Oluştur (PDF)"
+                        >
+                            <FileText size={20} />
+                        </button>
                         <button
                             onClick={() => setIsSpeechEnabled(!isSpeechEnabled)}
                             className={`${styles.actionButton} ${!isSpeechEnabled ? styles.disabledAction : ''}`}

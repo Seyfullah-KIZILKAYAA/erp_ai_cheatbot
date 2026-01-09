@@ -35,12 +35,18 @@ const authenticate = async (): Promise<number> => {
 };
 
 // Execute search_read on a model
-export const searchReadOdoo = async (model: string, query: any[] = [], fields: string[] = [], limit: number = 10): Promise<any> => {
+export const searchReadOdoo = async (model: string, query: any[] = [], fields: string[] = [], limit: number = 10, order: string = ''): Promise<any> => {
     try {
         const uid = await authenticate();
         const client = getClient('/xmlrpc/2/object');
 
         return new Promise((resolve, reject) => {
+            const options: any = {
+                fields: fields.length > 0 ? fields : undefined,
+                limit: limit
+            };
+            if (order) options.order = order;
+
             client.methodCall('execute_kw', [
                 ODOO_DB,
                 uid,
@@ -48,7 +54,7 @@ export const searchReadOdoo = async (model: string, query: any[] = [], fields: s
                 model,
                 'search_read',
                 [query],
-                { fields: fields.length > 0 ? fields : undefined, limit: limit }
+                options
             ], (error, value) => {
                 if (error) {
                     reject(error);
