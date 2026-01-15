@@ -8,19 +8,26 @@ import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-async function getDatabaseSchema() {
+async function getDatabaseSchema(allowedTables: string[]) {
+    const allTables: Record<string, string> = {
+        'res.partner': `1. res.partner (Müşteriler ve Kişiler)
+       - Alanlar: name (Tam ad), email, phone, city, is_company (Şirket mi?), comment (Notlar)
+       - İpucu: Müşteri ararken 'name' alanını 'ilike' ile ara.`,
+        'sale.order': `2. sale.order (Satış Siparişleri/Teklifler)
+       - Alanlar: name (Sipariş No, örn: S0001), partner_id (Müşteri), date_order (Tarih), amount_total (Toplam Tutar), state (Durum: draft=teklif, sale=onaylı, done=tamamlanmış)`,
+        'product.product': `3. product.product (Ürünler)
+       - Alanlar: name (Ürün adı), lst_price (Liste fiyatı), qty_available (Stok miktarı), default_code (Ürün kodu/barkod), type (Ürün tipi)`
+    };
+
+    const filtered = allowedTables
+        .filter(t => allTables[t])
+        .map(t => allTables[t])
+        .join('\n\n    ');
+
     return `
     TABLO VE ALAN REHBERİ (Odoo):
-    1. res.partner (Müşteriler ve Kişiler)
-       - Alanlar: name (Tam ad), email, phone, city, is_company (Şirket mi?), comment (Notlar)
-       - İpucu: Müşteri ararken 'name' alanını 'ilike' ile ara.
+    ${filtered || 'ERİŞİLEBİLİR TABLO BULUNAMADI.'}
     
-    2. sale.order (Satış Siparişleri/Teklifler)
-       - Alanlar: name (Sipariş No, örn: S0001), partner_id (Müşteri), date_order (Tarih), amount_total (Toplam Tutar), state (Durum: draft=teklif, sale=onaylı, done=tamamlanmış)
-    
-    3. product.product (Ürünler)
-       - Alanlar: name (Ürün adı), lst_price (Liste fiyatı), qty_available (Stok miktarı), default_code (Ürün kodu/barkod), type (Ürün tipi)
-       
     KRİTİK NOT: 
     - Arama yaparken her zaman 'ilike' kullan (Büyük/küçük harf duyarsızlığı için).
     - Kullanıcı "Teklifleri göster" derse 'state' = 'draft' filtresi ekle.
@@ -30,36 +37,38 @@ async function getDatabaseSchema() {
 
 export async function POST(req: Request) {
     try {
-        const { message, history } = await req.json();
+        const { message, history, userContext } = await req.json();
 
-        const schemaDescription = await getDatabaseSchema();
+        const role = userContext?.role || 'Misafir';
+        const allowedTables = userContext?.permissions || [];
+
+        const schemaDescription = await getDatabaseSchema(allowedTables);
 
         const systemPrompt = `
-        Sen profesyonel bir Odoo ERP Uzmanısın. Kullanıcının veriye ulaşmasını sağlamak senin birincil görevin.
-        "Uygun kayıt bulunamadı" hatasını en aza indirmek için şu stratejileri uygula:
+        Sen profesyonel bir Odoo ERP Uzmanısın ve şu anki rolün: **${role}**.
         
-        ARAMA STRATEJİLERİ:
-        1. **Fuzzy Search (Esnek Arama)**: Metin bazlı aramalarda (isim, email, ürün adı) HER ZAMAN 'ilike' operatörünü kullan. 'eq' operatörünü sadece ID veya tam kod aramalarında kullan.
-        2. **Büyük/Küçük Harf**: Odoo 'ilike' operatörü ile büyük/küçük harf duyarsız arama yapar, bu yüzden tercihin her zaman 'ilike' olsun.
-        3. **Kapsayıcı Sorgular**: Kullanıcı "Ahmet'i bul" dediğinde sadece tam eşleşme arama, 'ilike' ile "Ahmet" araması yap ki "Ahmet Yılmaz" gibi kayıtlar da gelsin.
-        4. **Varsayılan Filtreler**: Eğer kullanıcı tarih belirtmediyse, çok kısıtlayıcı tarih filtreleri koyma.
+        ROLE-BASED AI ACCESS (RBAA) KURALLARI:
+        1. Sen sadece sana tanımlanan yetki dahilinde hareket eden bir dijital ERP personelisin.
+        2. Sadece aşağıdaki şemada belirtilen tablolara erişebilirsin. Şemada olmayan bir tabloya veya veriye erişim yetkin YOKTUR.
+        3. Kullanıcı yetkin olmayan bir veri talep ederse, bunu profesyonel, kurumsal ve net bir dille reddet. Yetkini aşmaya çalışma.
+        4. Bilgiye sahip olmamak bir hata değil, güvenli bir davranıştır. Asla tahmin yürüterek yasaklı veriyi uydurma.
         
+        ERİŞİLEBİLİR ŞEMA:
         ${schemaDescription}
 
-        GÖRSELLEŞTİRME VE JSON FORMATI:
+        ARAMA STRATEJİLERİ:
+        1. Metin bazlı aramalarda HER ZAMAN 'ilike' kullan.
+        2. Her zaman kurumsal ve nazik bir dil kullan.
+
+        JSON FORMATI:
         {
             "type": "query",
             "table": "model_adi",
-            "filters": [
-                { "column": "name", "operator": "ilike", "value": "kelime" }
-            ],
-            "fields": ["name", "id", ...gereklialanlar],
+            "filters": [{ "column": "name", "operator": "ilike", "value": "kelime" }],
+            "fields": ["name", "id"],
             "limit": 20,
             "display": "table" | "stat" | "chart" | "trend"
         }
-
-        EĞER KAYIT BULUNAMAZSA:
-        Kullanıcıya "Kayıt bulunamadı" demek yerine, "Herhangi bir filtre uygulamadan listeyi görmek ister misiniz?" gibi yönlendirmeler yap veya en yakın sonuçları bulmaya çalış.
         `;
 
         const messages = [

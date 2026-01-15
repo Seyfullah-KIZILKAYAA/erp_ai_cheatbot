@@ -2,7 +2,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText, Download } from 'lucide-react'
+import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import styles from './ChatInterface.module.css'
@@ -36,6 +36,10 @@ export default function ChatInterface() {
         timestamp: new Date()
     };
 
+    const [user, setUser] = useState<any>(null)
+    const [loginData, setLoginData] = useState({ username: '', password: '' })
+    const [loginError, setLoginError] = useState('')
+
     const [sessions, setSessions] = useState<ChatSession[]>([])
     const [currentSessionId, setCurrentSessionId] = useState<string>('')
     const [inputValue, setInputValue] = useState('')
@@ -47,15 +51,18 @@ export default function ChatInterface() {
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const recognitionRef = useRef<any>(null)
 
-    // --- Persistence Logic ---
+    // --- Auth & Persistence Logic ---
     useEffect(() => {
-        // Load Audio Setting
+        const savedUser = localStorage.getItem('erp_user');
+        if (savedUser) {
+            setUser(JSON.parse(savedUser));
+        }
+
         const savedSpeechPref = localStorage.getItem(SPEECH_KEY);
         if (savedSpeechPref !== null) {
             setIsSpeechEnabled(savedSpeechPref === 'true');
         }
 
-        // Load Sessions
         const savedSessions = localStorage.getItem(SESSIONS_KEY);
         if (savedSessions) {
             try {
@@ -91,6 +98,35 @@ export default function ChatInterface() {
             window.speechSynthesis.cancel();
         }
     }, [isSpeechEnabled]);
+
+    const handleLogin = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setLoginError('');
+        setIsLoading(true);
+        try {
+            const response = await fetch('http://localhost:8000/api/login/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(loginData)
+            });
+            if (response.ok) {
+                const data = await response.json();
+                setUser(data);
+                localStorage.setItem('erp_user', JSON.stringify(data));
+            } else {
+                setLoginError('Hatalı kullanıcı adı veya şifre.');
+            }
+        } catch (err) {
+            setLoginError('Sunucu bağlantı hatası.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleLogout = () => {
+        setUser(null);
+        localStorage.removeItem('erp_user');
+    };
 
     const createNewChat = () => {
         const newId = Date.now().toString();
@@ -171,7 +207,6 @@ export default function ChatInterface() {
 
     const speakText = (text: string) => {
         if (typeof window === 'undefined' || !window.speechSynthesis) return;
-
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'tr-TR';
@@ -180,50 +215,33 @@ export default function ChatInterface() {
 
     const generateReport = () => {
         const doc = new jsPDF();
-
-        // Font setup (basic support for Turkish characters might need a custom font, 
-        // using standard font for now, might have issues with some chars)
         doc.setFont("helvetica", "bold");
         doc.setFontSize(20);
         doc.text("ERP AI Asistanı - Sohbet Raporu", 14, 22);
-
         doc.setFont("helvetica", "normal");
         doc.setFontSize(10);
         doc.text(`Tarih: ${new Date().toLocaleDateString('tr-TR')}`, 14, 30);
-
         let yPos = 40;
-
-        messages.forEach((msg, index) => {
+        messages.forEach((msg) => {
             if (yPos > 270) {
                 doc.addPage();
                 yPos = 20;
             }
-
             doc.setFont("helvetica", "bold");
             doc.setFontSize(11);
             doc.setTextColor(msg.role === 'user' ? '#2563eb' : '#000000');
             const role = msg.role === 'user' ? 'Kullanıcı:' : 'Asistan:';
             doc.text(role, 14, yPos);
             yPos += 7;
-
             doc.setFont("helvetica", "normal");
             doc.setFontSize(10);
             doc.setTextColor('#333333');
-
-            // Text wrapping
             const textLines = doc.splitTextToSize(msg.content, 180);
             doc.text(textLines, 14, yPos);
             yPos += (textLines.length * 5) + 5;
-
-            // If there is table data
             if (msg.role === 'bot' && msg.ui_component === 'table' && msg.data && Array.isArray(msg.data)) {
                 const headers = Object.keys(msg.data[0]);
-                const body = msg.data.map((row: any) => headers.map(h => {
-                    const val = row[h];
-                    if (typeof val === 'object' && val !== null) return JSON.stringify(val);
-                    return String(val);
-                }));
-
+                const body = msg.data.map((row: any) => headers.map(h => String(row[h])));
                 autoTable(doc, {
                     startY: yPos,
                     head: [headers],
@@ -232,12 +250,9 @@ export default function ChatInterface() {
                     styles: { fontSize: 8, font: 'helvetica' },
                     headStyles: { fillColor: [41, 128, 185] }
                 });
-
-                // autoTable updates lastAutoTable.finalY
                 yPos = (doc as any).lastAutoTable.finalY + 10;
             }
         });
-
         doc.save(`ERP_Rapor_${Date.now()}.pdf`);
     };
 
@@ -264,13 +279,15 @@ export default function ChatInterface() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     message: userMessage.content,
-                    history: messages
+                    history: messages,
+                    userContext: {
+                        role: user?.role,
+                        permissions: user?.permissions
+                    }
                 })
             });
 
             const data = await response.json();
-
-            // Auto speak if enabled
             if (isSpeechEnabled) speakText(data.content);
 
             const botMessage: Message = {
@@ -294,6 +311,49 @@ export default function ChatInterface() {
         } finally {
             setIsLoading(false)
         }
+    }
+
+    if (!user) {
+        return (
+            <div className={styles.loginLayout}>
+                <div className={styles.loginCard}>
+                    <div className={styles.loginHeader}>
+                        <Bot size={48} className={styles.loginIcon} />
+                        <h1>ERP AI Asistanı</h1>
+                        <p>Role-Based AI Access (RBAA) - Giriş yapın</p>
+                    </div>
+                    <form onSubmit={handleLogin} className={styles.loginForm}>
+                        <div className={styles.inputGroup}>
+                            <User size={18} />
+                            <input
+                                type="text"
+                                placeholder="Kullanıcı Adı"
+                                value={loginData.username}
+                                onChange={(e) => setLoginData({ ...loginData, username: e.target.value })}
+                                required
+                            />
+                        </div>
+                        <div className={styles.inputGroup}>
+                            <Bot size={18} />
+                            <input
+                                type="password"
+                                placeholder="Şifre"
+                                value={loginData.password}
+                                onChange={(e) => setLoginData({ ...loginData, password: e.target.value })}
+                                required
+                            />
+                        </div>
+                        {loginError && <p className={styles.errorText}>{loginError}</p>}
+                        <button type="submit" className={styles.loginButton} disabled={isLoading}>
+                            {isLoading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
+                        </button>
+                    </form>
+                    <div className={styles.loginFooter}>
+                        Örnek Kullanıcılar: seyfullah, mehmet, ayse
+                    </div>
+                </div>
+            </div>
+        )
     }
 
     return (
@@ -326,6 +386,19 @@ export default function ChatInterface() {
                         </div>
                     ))}
                 </div>
+
+                <div className={styles.sidebarFooter}>
+                    <div className={styles.userInfo}>
+                        <div className={styles.userAvatar}>{user.username ? user.username[0].toUpperCase() : 'U'}</div>
+                        <div className={styles.userDetails}>
+                            <span className={styles.userName}>{user.username}</span>
+                            <span className={styles.userRole}>{user.role}</span>
+                        </div>
+                    </div>
+                    <button onClick={handleLogout} className={styles.logoutButton} title="Çıkış Yap">
+                        <Trash2 size={16} />
+                    </button>
+                </div>
             </aside>
 
             {/* --- MAIN --- */}
@@ -345,11 +418,7 @@ export default function ChatInterface() {
                     </div>
 
                     <div className={styles.headerActions}>
-                        <button
-                            onClick={generateReport}
-                            className={styles.actionButton}
-                            title="Rapor Oluştur (PDF)"
-                        >
+                        <button onClick={generateReport} className={styles.actionButton} title="Rapor Oluştur (PDF)">
                             <FileText size={20} />
                         </button>
                         <button
@@ -371,11 +440,7 @@ export default function ChatInterface() {
                                     {msg.role === 'bot' && (
                                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                             <Bot size={20} style={{ flexShrink: 0, marginTop: '4px' }} />
-                                            <button
-                                                onClick={() => speakText(msg.content)}
-                                                className={styles.messageSpeakButton}
-                                                title="Sesli Dinle"
-                                            >
+                                            <button onClick={() => speakText(msg.content)} className={styles.messageSpeakButton} title="Sesli Dinle">
                                                 <Volume2 size={14} />
                                             </button>
                                         </div>

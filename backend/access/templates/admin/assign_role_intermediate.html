@@ -1,0 +1,33 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<form method="post">
+    {% csrf_token %}
+    <h3>Seçili {{ items.count }} Tablo İçin Rol Seçin</h3>
+    <div style="margin: 20px 0;">
+        <label for="role_id">Hedef Rol:</label>
+        <select name="role_id" id="role_id" required style="padding: 5px; min-width: 200px;">
+            <option value="">--- Rol Seçin ---</option>
+            {% for role in roles %}
+                <option value="{{ role.id }}">{{ role.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <ul>
+        {% for item in items %}
+            <li>{{ item.model_name }} - {{ item.description }}</li>
+            <input type="hidden" name="_selected_action" value="{{ item.pk }}" />
+        {% endfor %}
+    </ul>
+
+    <input type="hidden" name="action" value="{{ action }}" />
+    <input type="hidden" name="post" value="yes" />
+    
+    <div style="margin-top: 30px;">
+        <button type="submit" name="apply" style="background: #417690; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer;">
+            İşlemi Tamamla
+        </button>
+        <a href="." style="margin-left: 15px; text-decoration: none; color: #666;">İptal</a>
+    </div>
+</form>
+{% endblock %}
