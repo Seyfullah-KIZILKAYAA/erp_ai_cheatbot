@@ -20,7 +20,6 @@ An intelligent ERP Assistant that allows you to query your business data using n
 - **🛡️ Resilient Search (Fallback Engine)**: Intelligent fuzzy matching (ilike) and automatic fallback to suggested records if a specific query returns no results.
 - **🎙️ Voice Interaction**: Hands-free operation with integrated **Speech-to-Text** (input) and **Text-to-Speech** (response).
 - **🚀 Ultra-Fast AI (Sub-second response)**: Powered by Groq's high-speed inference engine using the **Llama 3.3 70B** model.
-- **🔄 Multi-Session Chat**: Persistent chat history managed via Supabase, allowing you to switch between different business context threads seamlessly.
 - **🛡️ Secure XML-RPC Bridge**: Communicates directly with Odoo's external API using secure credentials.
 
 ## 🛠️ Tech Stack
@@ -29,7 +28,6 @@ An intelligent ERP Assistant that allows you to query your business data using n
 - **Visuals**: [Framer Motion](https://www.framer.com/motion/) (Animations), [Recharts](https://recharts.org/) (Data Viz), [Lucide React](https://lucide.dev/) (Icons)
 - **AI Engine**: [Groq Cloud](https://groq.com/) (Llama-3.3-70b-versatile)
 - **ERP Connection**: [Odoo XML-RPC](https://www.odoo.com/documentation/17.0/developer/howto/api.html)
-- **Database/Auth**: [Supabase](https://supabase.com/)
 
 ## 🚀 Getting Started
 
@@ -45,13 +43,8 @@ npm install
 ```
 
 ### 3. Environment Configuration
-Create a `.env.local` file in the root directory and add your keys:
-
-```bash
-# AI & Database
+# AI API
 GROQ_API_KEY=your_groq_api_key
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
 # Odoo Integration
 ODOO_URL=http://your-odoo-instance.com
