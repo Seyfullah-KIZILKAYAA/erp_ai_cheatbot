@@ -15,6 +15,9 @@ An intelligent ERP Assistant that allows you to query your business data using n
   - **📊 Charts**: For trends and comparisons (powered by Recharts).
   - **📋 Tables**: For detailed lists and data grids.
   - **🏷️ Stat Cards**: For single metrics and totals.
+  - **📉 Line Charts (New!)**: For time-series trend analysis and forecasting.
+- **🔮 Smart Forecasting**: AI-driven trend analysis of historical Odoo data to predict future business metrics (e.g., next month's sales or stock needs).
+- **🛡️ Resilient Search (Fallback Engine)**: Intelligent fuzzy matching (ilike) and automatic fallback to suggested records if a specific query returns no results.
 - **🎙️ Voice Interaction**: Hands-free operation with integrated **Speech-to-Text** (input) and **Text-to-Speech** (response).
 - **🚀 Ultra-Fast AI (Sub-second response)**: Powered by Groq's high-speed inference engine using the **Llama 3.3 70B** model.
 - **🔄 Multi-Session Chat**: Persistent chat history managed via Supabase, allowing you to switch between different business context threads seamlessly.

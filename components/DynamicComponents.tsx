@@ -4,8 +4,8 @@
 
 import React from 'react';
 import styles from './DynamicComponents.module.css';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { Download, FileSpreadsheet, FileText } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { Download, FileSpreadsheet, FileText, TrendingUp } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { useRef } from 'react';
 import * as XLSX from 'xlsx';
@@ -13,7 +13,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 interface DynamicComponentProps {
-    type: 'table' | 'chart' | 'stat';
+    type: 'table' | 'chart' | 'stat' | 'trend';
     data: any;
 }
 
@@ -147,37 +147,58 @@ export default function DynamicWidget({ type, data }: DynamicComponentProps) {
         );
     }
 
-    // --- CHART ---
-    if (type === 'chart') {
+    // --- CHART / TREND ---
+    if (type === 'chart' || type === 'trend') {
         if (!Array.isArray(data) || data.length === 0) return null;
 
-        // X ekseni için uygun bir aday bul (tarih veya isim)
         const keys = Object.keys(data[0]);
         let xKey = keys.find(k => k.includes('name') || k.includes('ad') || k.includes('date') || k.includes('tarih')) || keys[0];
-
-        // Y ekseni için sayısal değeri bul
         let dataKey = keys.find(k => typeof data[0][k] === 'number' && k !== 'id') || keys[1];
+
+        // Forecasting indicator
+        const isTrend = type === 'trend';
 
         return (
             <div className={styles.dynamicWidget}>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div className={styles.chartTitle}>
+                        {isTrend && <TrendingUp size={16} style={{ marginRight: '8px', color: '#3b82f6' }} />}
+                        <span>{isTrend ? 'Tahmin Analizi' : 'Veri Grafiği'}</span>
+                    </div>
                     <button onClick={downloadChartAsImage} className={styles.downloadButton} title="Grafiği İndir">
-                        <Download size={16} /> <span>Grafik İndir</span>
+                        <Download size={16} /> <span>İndir</span>
                     </button>
                 </div>
                 <div className={styles.chartContainer} ref={chartRef}>
                     <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={data}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                            <XAxis dataKey={xKey} stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
-                            <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}`} />
-                            <Tooltip
-                                contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }}
-                                itemStyle={{ color: '#fff' }}
-                            />
-                            <Legend />
-                            <Bar dataKey={dataKey} fill="#adfa1d" radius={[4, 4, 0, 0]} name={formatHeader(dataKey)} />
-                        </BarChart>
+                        {isTrend ? (
+                            <LineChart data={data}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                                <XAxis dataKey={xKey} stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
+                                <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }}
+                                    itemStyle={{ color: '#fff' }}
+                                />
+                                <Legend />
+                                <Line type="monotone" dataKey={dataKey} stroke="#3b82f6" strokeWidth={2} dot={{ fill: '#3b82f6' }} name={formatHeader(dataKey)} />
+                                {keys.includes('forecast') && (
+                                    <Line type="monotone" dataKey="forecast" stroke="#adfa1d" strokeDasharray="5 5" strokeWidth={2} name="Tahmin" />
+                                )}
+                            </LineChart>
+                        ) : (
+                            <BarChart data={data}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                                <XAxis dataKey={xKey} stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
+                                <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
+                                <Tooltip
+                                    contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }}
+                                    itemStyle={{ color: '#fff' }}
+                                />
+                                <Legend />
+                                <Bar dataKey={dataKey} fill="#adfa1d" radius={[4, 4, 0, 0]} name={formatHeader(dataKey)} />
+                            </BarChart>
+                        )}
                     </ResponsiveContainer>
                 </div>
             </div>

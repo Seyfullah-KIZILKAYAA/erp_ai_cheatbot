@@ -14,7 +14,7 @@ interface Message {
     content: string
     timestamp: Date
     data?: any
-    ui_component?: 'table' | 'chart' | 'stat'
+    ui_component?: 'table' | 'chart' | 'stat' | 'trend'
 }
 
 interface ChatSession {

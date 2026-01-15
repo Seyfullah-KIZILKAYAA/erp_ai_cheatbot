@@ -9,19 +9,22 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 async function getDatabaseSchema() {
-    // Odoo Modelleri ve Alanları (AI'ın bilmesi gerekenler)
     return `
-    MEVCUT ERP TABLOLARI (Odoo):
-    1. res.partner (Müşteriler/Contacts)
-       - Alanlar: name, email, phone, city, country_id, is_company
+    TABLO VE ALAN REHBERİ (Odoo):
+    1. res.partner (Müşteriler ve Kişiler)
+       - Alanlar: name (Tam ad), email, phone, city, is_company (Şirket mi?), comment (Notlar)
+       - İpucu: Müşteri ararken 'name' alanını 'ilike' ile ara.
     
-    2. sale.order (Satış Siparişleri)
-       - Alanlar: name, partner_id, date_order, amount_total, state (draft, sale, done)
+    2. sale.order (Satış Siparişleri/Teklifler)
+       - Alanlar: name (Sipariş No, örn: S0001), partner_id (Müşteri), date_order (Tarih), amount_total (Toplam Tutar), state (Durum: draft=teklif, sale=onaylı, done=tamamlanmış)
     
     3. product.product (Ürünler)
-       - Alanlar: name, lst_price (satış fiyatı), qty_available (stok), default_code (kod)
+       - Alanlar: name (Ürün adı), lst_price (Liste fiyatı), qty_available (Stok miktarı), default_code (Ürün kodu/barkod), type (Ürün tipi)
        
-    NOT: Tablo isimlerini (res.partner, sale.order vb.) tam olarak bu şekilde kullan.
+    KRİTİK NOT: 
+    - Arama yaparken her zaman 'ilike' kullan (Büyük/küçük harf duyarsızlığı için).
+    - Kullanıcı "Teklifleri göster" derse 'state' = 'draft' filtresi ekle.
+    - Kullanıcı "Satışları göster" derse 'state' = 'sale' filtresi ekle.
     `;
 }
 
@@ -32,40 +35,31 @@ export async function POST(req: Request) {
         const schemaDescription = await getDatabaseSchema();
 
         const systemPrompt = `
-        Sen uzman bir Odoo ERP Asistanısın. Şu anki tarih: ${new Date().toLocaleString('tr-TR')}
+        Sen profesyonel bir Odoo ERP Uzmanısın. Kullanıcının veriye ulaşmasını sağlamak senin birincil görevin.
+        "Uygun kayıt bulunamadı" hatasını en aza indirmek için şu stratejileri uygula:
         
-        GÖREVİN:
-        Kullanıcının sorularını yanıtlamak için Odoo veritabanından veri çekmelisin.
-        Aşağıdaki şemayı kullan:
+        ARAMA STRATEJİLERİ:
+        1. **Fuzzy Search (Esnek Arama)**: Metin bazlı aramalarda (isim, email, ürün adı) HER ZAMAN 'ilike' operatörünü kullan. 'eq' operatörünü sadece ID veya tam kod aramalarında kullan.
+        2. **Büyük/Küçük Harf**: Odoo 'ilike' operatörü ile büyük/küçük harf duyarsız arama yapar, bu yüzden tercihin her zaman 'ilike' olsun.
+        3. **Kapsayıcı Sorgular**: Kullanıcı "Ahmet'i bul" dediğinde sadece tam eşleşme arama, 'ilike' ile "Ahmet" araması yap ki "Ahmet Yılmaz" gibi kayıtlar da gelsin.
+        4. **Varsayılan Filtreler**: Eğer kullanıcı tarih belirtmediyse, çok kısıtlayıcı tarih filtreleri koyma.
         
         ${schemaDescription}
 
-        KULLANIM KURALLARI:
-        1. Kullanıcının sorusunu analiz et.
-        2. Eğer veri gerekiyorsa, aşağıdaki JSON formatında sorgu üret.
-        3. Tablo adlarını ve alanları mutlaka şemadan al.
-
-        JSON FORMATI:
+        GÖRSELLEŞTİRME VE JSON FORMATI:
         {
-            "type": "query", // veya sayım için "count"
-            "table": "model_adi" (örn: res.partner),
-            "filters": [ // Odoo domain mantığına çevrilecek filtreler
-                { "column": "name", "operator": "ilike", "value": "Ahmet" }
+            "type": "query",
+            "table": "model_adi",
+            "filters": [
+                { "column": "name", "operator": "ilike", "value": "kelime" }
             ],
-            "fields": ["name", "email"], // İstenen alanlar
-            "limit": 10,
-            "order": "amount_total desc", // Sıralama (isteğe bağlı)
-            "display": "table" // veya "stat" veya "chart"
+            "fields": ["name", "id", ...gereklialanlar],
+            "limit": 20,
+            "display": "table" | "stat" | "chart" | "trend"
         }
-        
-        GÖRSELLEŞTİRME KURALLARI:
-        - Liste verileri için "table".
-        - Tek bir sayı/miktar için "stat".
-        - Karşılaştırmalar veya sayısal trendler için "chart".
-        
-        FİLTRE OPERATÖRLERİ: eq (=), ilike (içerir), gt (>), lt (<)
-        
-        Eğer sohbet devam ediyorsa ve veri gerekmiyorsa normal cevap ver (JSON döndürme).
+
+        EĞER KAYIT BULUNAMAZSA:
+        Kullanıcıya "Kayıt bulunamadı" demek yerine, "Herhangi bir filtre uygulamadan listeyi görmek ister misiniz?" gibi yönlendirmeler yap veya en yakın sonuçları bulmaya çalış.
         `;
 
         const messages = [
@@ -137,7 +131,7 @@ export async function POST(req: Request) {
                     const fields = action.fields || ['name'];
 
                     console.log(`Odoo Search: ${action.table}`, domain);
-                    const data = await searchReadOdoo(
+                    let data = await searchReadOdoo(
                         action.table,
                         domain,
                         fields,
@@ -145,13 +139,34 @@ export async function POST(req: Request) {
                         action.order || ''
                     );
 
+                    // FALLBACK: Eğer veri bulunamadıysa ve bir filtre varsa, filtreyi kaldırıp genel bir liste çekmeyi dene
+                    if ((!data || data.length === 0) && domain.length > 0) {
+                        console.log(`No results for ${action.table} with filters. Trying fallback (no filters)...`);
+                        data = await searchReadOdoo(
+                            action.table,
+                            [], // No filters
+                            fields,
+                            5, // Just a few examples
+                            action.order || ''
+                        );
+
+                        // Mark as fallback data for the summary AI
+                        (data as any).isFallback = true;
+                    }
+
                     if (!data || data.length === 0) {
-                        finalResponse = "Kriterlere uygun kayıt bulunamadı.";
+                        finalResponse = "Üzgünüm, aradığın kriterlerde hiçbir kayıt bulunamadı ve veritabanı boş görünüyor.";
                     } else {
                         responseData = data;
-                        uiType = action.display || 'table';
+                        uiType = (data as any).isFallback ? 'table' : (action.display || 'table');
 
-                        // Summarize results for the user
+                        // If it's a trend, we can add a simple linear projection or let the summary AI explain it
+                        if (uiType === 'trend' && data.length > 2) {
+                            // Simple Forecasting Logic (SMA or Linear)
+                            // We will let the summary AI handle the complex interpretation
+                        }
+
+                        // Summarize results for the user with Forecasting context
                         const summaryRes = await fetch(GROQ_API_URL, {
                             method: "POST",
                             headers: { "Authorization": `Bearer ${GROQ_API_KEY}`, "Content-Type": "application/json" },
@@ -160,9 +175,12 @@ export async function POST(req: Request) {
                                 messages: [
                                     {
                                         role: "system",
-                                        content: "Gelen veriyi kısa ve öz bir şekilde kullanıcıya açıkla. ÖNEMLİ: Tablodaki tüm satırları tek tek metin olarak listeleme, çünkü veriler zaten bir tablo içinde gösterilecek. Sadece genel bir özet ve varsa önemli bir bulguyu söyle."
+                                        content: `Gelen veriyi analiz et ve kullanıcıya açıkla. 
+                                        NOT: Eğer gelen veri 'isFallback: true' ise kullanıcıya aradığı spesifik kaydı bulamadığını ama sistemdeki bazı örnek kayıtları getirdiğini belirt. 
+                                        Trend analizlerinde (${uiType} === 'trend') geleceğe dair kısa bir tahminde bulun. 
+                                        ÖNEMLİ: Tablodaki tüm satırları tek tek metin olarak listeleme.`
                                     },
-                                    { role: "user", content: `VERİLER: ${JSON.stringify(data).slice(0, 1500)}\n\nKullanıcının Sorusu: ${message}` }
+                                    { role: "user", content: `VERİLER: ${JSON.stringify(data).slice(0, 2000)}\n\nKullanıcının Sorusu: ${message}\nFallback Durumu: ${(data as any).isFallback ? 'EVET (Spesifik sonuç yok, genel örnekler bunlar)' : 'HAYIR (Tam sonuçlar)'}` }
                                 ]
                             })
                         });
@@ -173,7 +191,6 @@ export async function POST(req: Request) {
             }
         } catch (e: any) {
             console.error("Action Processing Error:", e);
-            // Hata olsa bile metni döndür
         }
 
         return NextResponse.json({
