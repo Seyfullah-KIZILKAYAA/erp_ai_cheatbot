@@ -39,19 +39,19 @@ export async function POST(req: Request) {
     try {
         const { message, history, userContext } = await req.json();
 
-        const role = userContext?.role || 'Misafir';
-        const allowedTables = userContext?.permissions || [];
+        const username = userContext?.username || 'Kullanıcı';
+        // Roller kaldırıldığı için tüm tablolara erişim veriyoruz
+        const allowedTables = ['res.partner', 'sale.order', 'product.product'];
 
         const schemaDescription = await getDatabaseSchema(allowedTables);
 
         const systemPrompt = `
-        Sen profesyonel bir Odoo ERP Uzmanısın ve şu anki rolün: **${role}**.
+        Sen profesyonel bir Odoo ERP Uzmanısın. Kullanıcı adın: **${username}**.
         
-        ROLE-BASED AI ACCESS (RBAA) KURALLARI:
-        1. Sen sadece sana tanımlanan yetki dahilinde hareket eden bir dijital ERP personelisin.
-        2. Sadece aşağıdaki şemada belirtilen tablolara erişebilirsin. Şemada olmayan bir tabloya veya veriye erişim yetkin YOKTUR.
-        3. Kullanıcı yetkin olmayan bir veri talep ederse, bunu profesyonel, kurumsal ve net bir dille reddet. Yetkini aşmaya çalışma.
-        4. Bilgiye sahip olmamak bir hata değil, güvenli bir davranıştır. Asla tahmin yürüterek yasaklı veriyi uydurma.
+        GÖREVİN:
+        1. Kullanıcının ERP verileri ile ilgili sorularını yanıtlamak için Odoo veritabanını sorgulamak.
+        2. Aşağıdaki şemada belirtilen tabloları kullanabilirsin.
+        3. Bilgiye sahip olmadığında dürüstçe belirt.
         
         ERİŞİLEBİLİR ŞEMA:
         ${schemaDescription}
@@ -184,10 +184,13 @@ export async function POST(req: Request) {
                                 messages: [
                                     {
                                         role: "system",
-                                        content: `Gelen veriyi analiz et ve kullanıcıya açıkla. 
-                                        NOT: Eğer gelen veri 'isFallback: true' ise kullanıcıya aradığı spesifik kaydı bulamadığını ama sistemdeki bazı örnek kayıtları getirdiğini belirt. 
-                                        Trend analizlerinde (${uiType} === 'trend') geleceğe dair kısa bir tahminde bulun. 
-                                        ÖNEMLİ: Tablodaki tüm satırları tek tek metin olarak listeleme.`
+                                        content: `Gelen veriyi analiz et ve kullanıcıya kısa, profesyonel bir açıklama yaz. 
+                                        ÖNEMLİ KURALLAR:
+                                        1. Tablodaki verileri metin olarak TEKRARLAMA (örn: 'Müşteri A'nın bakiyesi X'dir' gibi tek tek listeleme yapma).
+                                        2. Veri zaten altta bir tablo olarak gösterilecek, sen sadece verinin genel bir özetini veya analizini yap.
+                                        3. Eğer gelen veri 'isFallback: true' ise kullanıcıya aradığı spesifik kaydı bulamadığını ama sistemdeki bazı örnek kayıtları getirdiğini belirt. 
+                                        4. Trend analizlerinde (${uiType} === 'trend') geleceğe dair kısa bir tahminde bulun. 
+                                        5. Cevabın kısa ve öz olsun.`
                                     },
                                     { role: "user", content: `VERİLER: ${JSON.stringify(data).slice(0, 2000)}\n\nKullanıcının Sorusu: ${message}\nFallback Durumu: ${(data as any).isFallback ? 'EVET (Spesifik sonuç yok, genel örnekler bunlar)' : 'HAYIR (Tam sonuçlar)'}` }
                                 ]

@@ -3,7 +3,6 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth import authenticate, login, logout
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from .models import Role
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -14,12 +13,9 @@ class LoginView(APIView):
         user = authenticate(username=username, password=password)
         if user:
             login(request, user)
-            # ManyToMany field üzerinden yetkili tabloları çekiyoruz
-            permissions = user.profile.role.allowed_models.values_list('model_name', flat=True) if user.profile.role else []
             return Response({
                 'username': user.username,
-                'role': user.profile.role.name if user.profile.role else None,
-                'permissions': list(permissions)
+                'status': 'success'
             })
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -33,11 +29,9 @@ class UserInfoView(APIView):
 
     def get(self, request):
         user = request.user
-        permissions = user.profile.role.allowed_models.values_list('model_name', flat=True) if user.profile.role else []
         return Response({
             'username': user.username,
-            'role': user.profile.role.name if user.profile.role else None,
-            'permissions': list(permissions)
+            'status': 'authenticated'
         })
 
 from django.http import HttpResponse

@@ -1,10 +1,11 @@
 .dynamicWidget {
   margin-top: 10px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(30, 41, 59, 0.5); /* Sıkı/Koyu bir arka plan */
   border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  border-radius: 12px;
   overflow: hidden;
   font-size: 0.9rem;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
 }
 
 .downloadButton {
@@ -45,10 +46,16 @@
 }
 
 .table th {
-  background: rgba(255, 255, 255, 0.1);
-  font-weight: 600;
+  background: #1e293b; /* Koyu, opak bir renk */
+  color: var(--primary, #3b82f6);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
   position: sticky;
   top: 0;
+  z-index: 10;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.1);
 }
 
 .table tr:hover {

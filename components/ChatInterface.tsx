@@ -281,8 +281,7 @@ export default function ChatInterface() {
                     message: userMessage.content,
                     history: messages,
                     userContext: {
-                        role: user?.role,
-                        permissions: user?.permissions
+                        username: user?.username
                     }
                 })
             });
@@ -320,7 +319,7 @@ export default function ChatInterface() {
                     <div className={styles.loginHeader}>
                         <Bot size={48} className={styles.loginIcon} />
                         <h1>ERP AI Asistanı</h1>
-                        <p>Role-Based AI Access (RBAA) - Giriş yapın</p>
+                        <p>Akıllı ERP Yönetim Paneli - Giriş yapın</p>
                     </div>
                     <form onSubmit={handleLogin} className={styles.loginForm}>
                         <div className={styles.inputGroup}>
@@ -392,7 +391,6 @@ export default function ChatInterface() {
                         <div className={styles.userAvatar}>{user.username ? user.username[0].toUpperCase() : 'U'}</div>
                         <div className={styles.userDetails}>
                             <span className={styles.userName}>{user.username}</span>
-                            <span className={styles.userRole}>{user.role}</span>
                         </div>
                     </div>
                     <button onClick={handleLogout} className={styles.logoutButton} title="Çıkış Yap">
