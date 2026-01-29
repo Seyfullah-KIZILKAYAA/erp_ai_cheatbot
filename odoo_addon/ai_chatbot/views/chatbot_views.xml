@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Client Action: This tells Odoo to load a specific component -->
+    <record id="action_ai_chatbot_client" model="ir.actions.client">
+        <field name="name">AI Asistan</field>
+        <field name="tag">ai_chatbot_dashboard</field>
+    </record>
+
+    <!-- Main Menu Item -->
+    <menuitem id="menu_ai_chatbot_root"
+              name="AI Asistan"
+              action="action_ai_chatbot_client"
+              web_icon="base,static/description/icon.png"
+              sequence="1"/>
+</odoo>

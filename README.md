@@ -1,6 +1,6 @@
 # 🤖 ERP AI Chatbot - Odoo Integration 🚀
 
-An intelligent ERP Assistant that allows you to query your business data using natural language. Built with **Next.js 15+**, **React 19**, **Django**, and the ultra-fast **Groq AI API** (Llama 3.3). This version features real-time **Odoo ERP** integration via XML-RPC and **Role-Based AI Access (RBAA)**.
+An intelligent ERP Assistant that allows you to query your business data using natural language. Built with **Next.js 15+**, **React 19**, **Django**, and the ultra-fast **Groq AI API** (Llama 3.3). This version features real-time **Odoo ERP** integration via XML-RPC and can be embedded directly into the Odoo UI as a module.
 
 ![Project Status](https://img.shields.io/badge/Status-Active-success)
 ![Next.js](https://img.shields.io/badge/Next.js-15-black)
@@ -11,24 +11,25 @@ An intelligent ERP Assistant that allows you to query your business data using n
 
 ## 🌟 Core Features
 
-- **🛡️ Role-Based AI Access (RBAA)**: Strict permission controls managed via a Django backend. AI only accesses tables authorized for the specific user role (e.g., Admin, Manager, Staff).
+- **🧩 Odoo Module Integration**: Seamlessly integrated into the Odoo UI. You can access the AI Assistant directly from the Odoo main menu as a native-like module.
 - **💬 Natural Language Odoo Querying**: Ask questions like "Who are my top customers?" or "Show me low stock products". The AI understands Odoo models like `res.partner`, `sale.order`, and `product.product`.
 - **📈 Adaptive UI (Generative UI)**: Automatically renders data in the most suitable format:
   - **📊 Charts**: For trends and comparisons (powered by Recharts).
-  - **📋 Tables**: For detailed lists and data grids.
+  - **📋 Tables**: For detailed lists and improved visual clarity.
   - **🏷️ Stat Cards**: For single metrics and totals.
   - **📉 Line Charts**: For time-series trend analysis.
-- **🔮 Smart Forecasting**: AI-driven trend analysis of historical Odoo data to predict future business metrics.
+- **🔮 Smart Analysis**: Precise data summaries without repeating table contents in text. Focuses on brief, professional insights.
 - **🎙️ Voice Interaction**: Integrated **Speech-to-Text** (input) and **Text-to-Speech** (response).
 - **🚀 Ultra-Fast AI**: Powered by Groq's high-speed inference engine using the **Llama 3.3 70B** model.
-- **💾 Session Management**: Multi-session chat history persisted locally and linked to user profiles.
+- **💾 Session Management**: Multi-session chat history persisted locally.
 
 ## 🛠️ Tech Stack
 
 - **Frontend**: [Next.js 15+](https://nextjs.org/), [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/)
-- **Backend (Auth & RBAA)**: [Django](https://www.djangoproject.com/), [Django REST Framework](https://www.django-rest-framework.org/)
+- **Backend**: [Django](https://www.djangoproject.com/), [Django REST Framework](https://www.django-rest-framework.org/)
 - **AI Engine**: [Groq Cloud](https://groq.com/) (Llama-3.3-70b-versatile)
 - **ERP Connection**: [Odoo XML-RPC](https://www.odoo.com/documentation/17.0/developer/howto/api.html)
+- **Odoo Integration**: Custom Odoo Addon (OWL + Iframe)
 
 ## 🚀 Getting Started
 
@@ -49,8 +50,7 @@ source venv/bin/activate
 
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py sync_odoo_models  # Syncs all available Odoo tables
-python manage.py seed_data        # Creates demo users (Admin, Mehmet, Ayşe)
+python manage.py seed_data        # Creates demo superuser
 python manage.py runserver 8000
 ```
 
@@ -61,14 +61,20 @@ npm install
 npm run dev
 ```
 
-### 4. Environment Variables (.env.local)
+### 4. Install Odoo Addon
+1. Copy the `odoo_addon/ai_chatbot` folder to your Odoo `addons` directory.
+2. Activate **Developer Mode** in Odoo.
+3. Go to **Apps** -> **Update Apps List**.
+4. Search for "AI ERP Assistant" and click **Activate**.
+
+### 5. Environment Variables (.env.local)
 Create a `.env.local` file in the root:
 ```env
 # AI API
 GROQ_API_KEY=your_groq_api_key
 
 # Odoo Integration
-ODOO_URL=http://your-odoo-instance.com
+ODOO_URL=http://localhost:8069
 ODOO_DB=your_db_name
 ODOO_USERNAME=your_username
 ODOO_PASSWORD=your_api_key_or_password
@@ -76,11 +82,11 @@ ODOO_PASSWORD=your_api_key_or_password
 
 ## 💡 How It Works (The "Brain")
 
-1. **Authentication**: User logs in via the Django-integrated frontend. The user's role and allowed tables are loaded.
-2. **Filtered Schema**: The AI is only provided with the schema metadata for tables the user has permission to access.
-3. **Intention Analysis**: The user sends a query.
-4. **Action Generation**: AI generates a structured "Action JSON" within its security boundaries.
-5. **XML-RPC Execution**: The system fetches data from Odoo and renders the adaptive UI.
+1. **Native Feel**: The Odoo addon creates a client action that renders the Next.js app in an iframe, allowing a seamless experience.
+2. **Intention Analysis**: The user sends a query (Voice or Text).
+3. **Action Generation**: AI generates a structured "Action JSON" to fetch relevant Odoo data.
+4. **XML-RPC Execution**: The system fetches real-time data from Odoo via XML-RPC.
+5. **Adaptive Rendering**: Data is visualized as tables, charts, or stats based on the response type.
 
 ## 📄 License
 
