@@ -1,4 +1,4 @@
-# 🤖 ERP AI Chatbot - Odoo Integration 🚀
+# 🤖 ERP AI Chatbot - Odoo Intelligence 🚀
 
 An intelligent ERP Assistant that allows you to query your business data using natural language. Built with **Next.js 15+**, **React 19**, **Django**, and the ultra-fast **Groq AI API** (Llama 3.3). This version features real-time **Odoo ERP** integration via XML-RPC and includes a live dashboard for instant business metrics.
 
@@ -13,28 +13,32 @@ An intelligent ERP Assistant that allows you to query your business data using n
 ## 🌟 Core Features
 
 ### 🧠 Intelligent Analysis & Reasoning
-- **� Executive Daily Briefing**: A one-click "Daily Summary" feature that aggregates critical business data (revenue, new customers, low stock) into a concise, AI-generated executive report.
-- **🤔 Chain of Thought UI**: Visualizes the AI's reasoning process (e.g., "Analyzing Request...", "Querying Database...", "Visualizing Data...") to provide transparency and a premium user experience.
-- **💬 Natural Language Querying**: Ask complex questions like "Who are my top customers?" or "Show me low stock products". The AI understands Odoo models like `res.partner`, `sale.order`, and `product.product`.
+- **📢 Executive Daily Briefing**: A one-click "Daily Summary" feature that aggregates critical business data (revenue, new customers, low stock) into a concise, AI-generated executive report.
+- **🤔 Chain of Thought (Reasoning) UI**: Visualizes the AI's step-by-step thinking process (Analyzing -> Database Connection -> Data Processing -> Visualization) for professional transparency.
+- **💬 Natural Language Odoo Querying**: Ask complex questions like *"Top 5 customers this month"* or *"List products with low stock"*. The AI understands Odoo models like `res.partner`, `sale.order`, and `product.product`.
 
-### 📊 Dynamic Dashboard & UI
-- **⚡ Live Dashboard Sidebar**: A persistent right-hand sidebar displaying real-time business metrics (Active Customers, Orders, Products, Quotations). 
-- **📈 Adaptive Generative UI**: Automatically renders data in the most suitable format:
-  - **📊 Interactive Charts**: For trends and comparisons (powered by Recharts).
-  - **📋 Smart Tables**: For detailed lists with clean formatting.
-  - **🏷️ Stat Cards**: For single metrics and totals.
-- **� Seamless Access**: Designed for instant interaction without mandatory login barriers.
+### 📊 Dynamic Dashboard & Visualizations
+- **⚡ Real-Time Dashboard Sidebar**: A persistent right-hand sidebar showing live metrics for Customers, Orders, Products, and Quotations directly from Odoo.
+- **📈 Generative UI (Adaptive Rendering)**: Automatically selects and renders the best visual format for data:
+  - **📊 Interactive Charts**: Statistical trends and comparisons (powered by Recharts).
+  - **📋 Smart Data Tables**: Clean, searchable, and professional data presentation.
+  - **🏷️ Key Metric Cards**: Instant visibility for critical numbers.
+- **📄 PDF Report Export**: Export chat history and data tables directly to high-quality PDF files for offline review or sharing.
 
-### 🎙️ Advanced Interaction
-- **🗣️ Voice Interaction**: Integrated **Speech-to-Text** (input) and **Text-to-Speech** (response) for complete hands-free operation.
-- **💾 Session Management**: Multi-session chat history persisted locally in the browser, allowing you to switch between different context threads.
+### 🎙️ Advanced Interaction & UX
+- **🎙️ Voice-First Experience**: 
+  - **Speech-to-Text**: Voice-command input for hands-free querying.
+  - **Text-to-Speech**: High-quality voice responses for an interactive AI personal assistant feel.
+- **💾 Session Management**: Multi-thread chat history stored locally, allowing users to manage multiple independent inquiries.
+- **🎨 Glassmorphism Design**: High-end, modern UI using CSS Modules with glassmorphism effects, optimized for both desktop and mobile viewports.
 
 ## 🛠️ Tech Stack
 
-- **Frontend**: [Next.js 15+](https://nextjs.org/), [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Tailwind CSS](https://tailwindcss.com/)
-- **Backend**: [Django](https://www.djangoproject.com/), [Django REST Framework](https://www.django-rest-framework.org/)
-- **AI Engine**: [Groq Cloud](https://groq.com/) (Llama-3.3-70b-versatile)
-- **ERP Connection**: [Odoo XML-RPC](https://www.odoo.com/documentation/17.0/developer/howto/api.html)
+- **Frontend**: Next.js 15+, React 19, Lucide Icons, Recharts, jsPDF.
+- **Styling**: Vanilla CSS Modules (Premium Glassmorphism Design).
+- **Backend**: Django & Django REST Framework.
+- **AI Intelligence**: Groq Cloud (Llama 3.3 70B Model).
+- **ERP Integration**: Odoo XML-RPC API.
 
 ## 🚀 Getting Started
 
@@ -77,14 +81,6 @@ ODOO_DB=your_db_name
 ODOO_USERNAME=your_username
 ODOO_PASSWORD=your_api_key_or_password
 ```
-
-## 💡 How It Works (The "Brain")
-
-1. **Intention Analysis**: The user sends a query (Voice or Text).
-2. **Reasoning Simulation**: The UI displays the AI's thought process steps (Analysing -> Querying -> Visualizing).
-3. **Action Generation**: AI generates a structured "Action JSON" to fetch relevant Odoo data.
-4. **XML-RPC Execution**: The system fetches real-time data from Odoo via XML-RPC.
-5. **Adaptive Rendering**: Data is visualized as tables, charts, or stats based on the response type.
 
 ## 📄 License
 
