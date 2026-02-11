@@ -2,7 +2,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText } from 'lucide-react'
+import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText, ShoppingCart, Users, Package, FileText as FileTextIcon, LayoutDashboard } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import styles from './ChatInterface.module.css'
@@ -36,27 +36,27 @@ export default function ChatInterface() {
         timestamp: new Date()
     };
 
-    const [user, setUser] = useState<any>(null)
-    const [loginData, setLoginData] = useState({ username: '', password: '' })
-    const [loginError, setLoginError] = useState('')
-
     const [sessions, setSessions] = useState<ChatSession[]>([])
     const [currentSessionId, setCurrentSessionId] = useState<string>('')
+    const [dashboardStats, setDashboardStats] = useState<any>(null)
     const [inputValue, setInputValue] = useState('')
     const [isLoading, setIsLoading] = useState(false)
     const [isListening, setIsListening] = useState(false)
     const [isSpeechEnabled, setIsSpeechEnabled] = useState(true)
+
     const [isSidebarOpen, setIsSidebarOpen] = useState(true)
+    const [isDashboardOpen, setIsDashboardOpen] = useState(true)
 
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const recognitionRef = useRef<any>(null)
 
     // --- Auth & Persistence Logic ---
     useEffect(() => {
-        const savedUser = localStorage.getItem('erp_user');
-        if (savedUser) {
-            setUser(JSON.parse(savedUser));
-        }
+        // Fetch Dashboard Stats
+        fetch('/api/dashboard')
+            .then(res => res.json())
+            .then(data => setDashboardStats(data))
+            .catch(err => console.error("Dashboard fetch error:", err));
 
         const savedSpeechPref = localStorage.getItem(SPEECH_KEY);
         if (savedSpeechPref !== null) {
@@ -99,34 +99,7 @@ export default function ChatInterface() {
         }
     }, [isSpeechEnabled]);
 
-    const handleLogin = async (e: React.FormEvent) => {
-        e.preventDefault();
-        setLoginError('');
-        setIsLoading(true);
-        try {
-            const response = await fetch('http://localhost:8000/api/login/', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(loginData)
-            });
-            if (response.ok) {
-                const data = await response.json();
-                setUser(data);
-                localStorage.setItem('erp_user', JSON.stringify(data));
-            } else {
-                setLoginError('Hatalı kullanıcı adı veya şifre.');
-            }
-        } catch (err) {
-            setLoginError('Sunucu bağlantı hatası.');
-        } finally {
-            setIsLoading(false);
-        }
-    };
 
-    const handleLogout = () => {
-        setUser(null);
-        localStorage.removeItem('erp_user');
-    };
 
     const createNewChat = () => {
         const newId = Date.now().toString();
@@ -173,6 +146,13 @@ export default function ChatInterface() {
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
+
+    const handleCardClick = (prompt: string) => {
+        // Dashboard açık kalsın mı? Kullanıcı isteğine göre, şimdilik kapatmıyoruz.
+        // Mobilde kapatmak mantıklı olabilir ama masaüstünde yan panelde kalması daha iyi.
+        if (window.innerWidth < 1024) setIsDashboardOpen(false);
+        handleSendMessage(null, prompt);
+    };
 
     useEffect(() => {
         scrollToBottom()
@@ -281,7 +261,7 @@ export default function ChatInterface() {
                     message: userMessage.content,
                     history: messages,
                     userContext: {
-                        username: user?.username
+                        username: 'Misafir'
                     }
                 })
             });
@@ -312,48 +292,7 @@ export default function ChatInterface() {
         }
     }
 
-    if (!user) {
-        return (
-            <div className={styles.loginLayout}>
-                <div className={styles.loginCard}>
-                    <div className={styles.loginHeader}>
-                        <Bot size={48} className={styles.loginIcon} />
-                        <h1>ERP AI Asistanı</h1>
-                        <p>Akıllı ERP Yönetim Paneli - Giriş yapın</p>
-                    </div>
-                    <form onSubmit={handleLogin} className={styles.loginForm}>
-                        <div className={styles.inputGroup}>
-                            <User size={18} />
-                            <input
-                                type="text"
-                                placeholder="Kullanıcı Adı"
-                                value={loginData.username}
-                                onChange={(e) => setLoginData({ ...loginData, username: e.target.value })}
-                                required
-                            />
-                        </div>
-                        <div className={styles.inputGroup}>
-                            <Bot size={18} />
-                            <input
-                                type="password"
-                                placeholder="Şifre"
-                                value={loginData.password}
-                                onChange={(e) => setLoginData({ ...loginData, password: e.target.value })}
-                                required
-                            />
-                        </div>
-                        {loginError && <p className={styles.errorText}>{loginError}</p>}
-                        <button type="submit" className={styles.loginButton} disabled={isLoading}>
-                            {isLoading ? 'Giriş yapılıyor...' : 'Giriş Yap'}
-                        </button>
-                    </form>
-                    <div className={styles.loginFooter}>
-                        Örnek Kullanıcılar: seyfullah, mehmet, ayse
-                    </div>
-                </div>
-            </div>
-        )
-    }
+
 
     return (
         <div className={styles.layout}>
@@ -388,14 +327,11 @@ export default function ChatInterface() {
 
                 <div className={styles.sidebarFooter}>
                     <div className={styles.userInfo}>
-                        <div className={styles.userAvatar}>{user.username ? user.username[0].toUpperCase() : 'U'}</div>
+                        <div className={styles.userAvatar}>M</div>
                         <div className={styles.userDetails}>
-                            <span className={styles.userName}>{user.username}</span>
+                            <span className={styles.userName}>Misafir</span>
                         </div>
                     </div>
-                    <button onClick={handleLogout} className={styles.logoutButton} title="Çıkış Yap">
-                        <Trash2 size={16} />
-                    </button>
                 </div>
             </aside>
 
@@ -416,6 +352,9 @@ export default function ChatInterface() {
                     </div>
 
                     <div className={styles.headerActions}>
+                        <button onClick={() => setIsDashboardOpen(true)} className={`${styles.actionButton} ${isDashboardOpen ? styles.activeAction : ''}`} title="Canlı Kartlar (Panel)">
+                            <LayoutDashboard size={20} />
+                        </button>
                         <button onClick={generateReport} className={styles.actionButton} title="Rapor Oluştur (PDF)">
                             <FileText size={20} />
                         </button>
@@ -480,6 +419,64 @@ export default function ChatInterface() {
                     <button type="submit" className={styles.sendButton} disabled={isLoading}><Send size={20} /></button>
                 </form>
             </div>
+
+            {/* --- RIGHT SIDEBAR (DASHBOARD) --- */}
+            <aside className={`${styles.rightSidebar} ${!isDashboardOpen ? styles.rightSidebarClosed : ''}`}>
+                <div className={styles.sidebarHeader}>
+                    <span className={styles.sidebarTitle} style={{ fontSize: '1rem', color: 'var(--foreground)' }}>Canlı Durum</span>
+                    <button onClick={() => setIsDashboardOpen(false)} className={styles.closeSidebarButton}>
+                        <X size={20} />
+                    </button>
+                </div>
+
+                <div className={styles.dashboardList}>
+                    {dashboardStats ? (
+                        <>
+                            <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Tüm müşterileri listele")}>
+                                <div className={styles.cardHeaderSmall}>
+                                    <div className={styles.cardIconSmall}>
+                                        <Users size={18} />
+                                    </div>
+                                    <span className={styles.cardLabelSmall}>Müşteriler</span>
+                                </div>
+                                <div className={styles.cardValueSmall}>{dashboardStats.customers || 0}</div>
+                            </div>
+
+                            <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Satış siparişlerini listele")}>
+                                <div className={styles.cardHeaderSmall}>
+                                    <div className={styles.cardIconSmall} style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981' }}>
+                                        <ShoppingCart size={18} />
+                                    </div>
+                                    <span className={styles.cardLabelSmall}>Siparişler</span>
+                                </div>
+                                <div className={styles.cardValueSmall}>{dashboardStats.orders || 0}</div>
+                            </div>
+
+                            <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Tüm ürünleri listele")}>
+                                <div className={styles.cardHeaderSmall}>
+                                    <div className={styles.cardIconSmall} style={{ background: 'rgba(236, 72, 153, 0.1)', color: '#ec4899' }}>
+                                        <Package size={18} />
+                                    </div>
+                                    <span className={styles.cardLabelSmall}>Ürünler</span>
+                                </div>
+                                <div className={styles.cardValueSmall}>{dashboardStats.products || 0}</div>
+                            </div>
+
+                            <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Taslak teklifleri listele")}>
+                                <div className={styles.cardHeaderSmall}>
+                                    <div className={styles.cardIconSmall} style={{ background: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b' }}>
+                                        <FileTextIcon size={18} />
+                                    </div>
+                                    <span className={styles.cardLabelSmall}>Teklifler</span>
+                                </div>
+                                <div className={styles.cardValueSmall}>{dashboardStats.quotations || 0}</div>
+                            </div>
+                        </>
+                    ) : (
+                        <div style={{ padding: '1rem', color: '#888', textAlign: 'center' }}>Yükleniyor...</div>
+                    )}
+                </div>
+            </aside>
         </div>
     )
 }
