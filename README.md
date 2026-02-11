@@ -12,18 +12,22 @@ An intelligent ERP Assistant that allows you to query your business data using n
 
 ## 🌟 Core Features
 
-- **📊 Live Dashboard Sidebar**: A persistent right-hand sidebar displaying real-time business metrics (Active Customers, Orders, Products, Quotations). Click on any card to instantly query detailed lists.
-- **🔓 Direct Access**: Simplified access without mandatory login, allowing instant interaction with the ERP assistant.
-- **💬 Natural Language Odoo Querying**: Ask questions like "Who are my top customers?" or "Show me low stock products". The AI understands Odoo models like `res.partner`, `sale.order`, and `product.product`.
-- **📈 Adaptive UI (Generative UI)**: Automatically renders data in the most suitable format:
-  - **📊 Charts**: For trends and comparisons (powered by Recharts).
-  - **📋 Tables**: For detailed lists and improved visual clarity.
+### 🧠 Intelligent Analysis & Reasoning
+- **� Executive Daily Briefing**: A one-click "Daily Summary" feature that aggregates critical business data (revenue, new customers, low stock) into a concise, AI-generated executive report.
+- **🤔 Chain of Thought UI**: Visualizes the AI's reasoning process (e.g., "Analyzing Request...", "Querying Database...", "Visualizing Data...") to provide transparency and a premium user experience.
+- **💬 Natural Language Querying**: Ask complex questions like "Who are my top customers?" or "Show me low stock products". The AI understands Odoo models like `res.partner`, `sale.order`, and `product.product`.
+
+### 📊 Dynamic Dashboard & UI
+- **⚡ Live Dashboard Sidebar**: A persistent right-hand sidebar displaying real-time business metrics (Active Customers, Orders, Products, Quotations). 
+- **📈 Adaptive Generative UI**: Automatically renders data in the most suitable format:
+  - **📊 Interactive Charts**: For trends and comparisons (powered by Recharts).
+  - **📋 Smart Tables**: For detailed lists with clean formatting.
   - **🏷️ Stat Cards**: For single metrics and totals.
-  - **📉 Line Charts**: For time-series trend analysis.
-- **🔮 Smart Analysis**: Precise data summaries without repeating table contents in text. Focuses on brief, professional insights.
-- **🎙️ Voice Interaction**: Integrated **Speech-to-Text** (input) and **Text-to-Speech** (response) for hands-free operation.
-- **🚀 Ultra-Fast AI**: Powered by Groq's high-speed inference engine using the **Llama 3.3 70B** model.
-- **💾 Session Management**: Multi-session chat history persisted locally in the browser.
+- **� Seamless Access**: Designed for instant interaction without mandatory login barriers.
+
+### 🎙️ Advanced Interaction
+- **🗣️ Voice Interaction**: Integrated **Speech-to-Text** (input) and **Text-to-Speech** (response) for complete hands-free operation.
+- **💾 Session Management**: Multi-session chat history persisted locally in the browser, allowing you to switch between different context threads.
 
 ## 🛠️ Tech Stack
 
@@ -77,10 +81,10 @@ ODOO_PASSWORD=your_api_key_or_password
 ## 💡 How It Works (The "Brain")
 
 1. **Intention Analysis**: The user sends a query (Voice or Text).
-2. **Action Generation**: AI generates a structured "Action JSON" to fetch relevant Odoo data.
-3. **XML-RPC Execution**: The system fetches real-time data from Odoo via XML-RPC.
-4. **Adaptive Rendering**: Data is visualized as tables, charts, or stats based on the response type.
-5. **Live Status**: The dashboard sidebar independently fetches key metrics to keep you updated at a glance.
+2. **Reasoning Simulation**: The UI displays the AI's thought process steps (Analysing -> Querying -> Visualizing).
+3. **Action Generation**: AI generates a structured "Action JSON" to fetch relevant Odoo data.
+4. **XML-RPC Execution**: The system fetches real-time data from Odoo via XML-RPC.
+5. **Adaptive Rendering**: Data is visualized as tables, charts, or stats based on the response type.
 
 ## 📄 License
 

@@ -2,7 +2,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText, ShoppingCart, Users, Package, FileText as FileTextIcon, LayoutDashboard } from 'lucide-react'
+import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText, ShoppingCart, Users, Package, FileText as FileTextIcon, LayoutDashboard, Loader2, CheckCircle2, Zap } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import styles from './ChatInterface.module.css'
@@ -41,6 +41,8 @@ export default function ChatInterface() {
     const [dashboardStats, setDashboardStats] = useState<any>(null)
     const [inputValue, setInputValue] = useState('')
     const [isLoading, setIsLoading] = useState(false)
+    const [reasoningSteps, setReasoningSteps] = useState<string[]>([])
+    const [currentStepIndex, setCurrentStepIndex] = useState(0)
     const [isListening, setIsListening] = useState(false)
     const [isSpeechEnabled, setIsSpeechEnabled] = useState(true)
 
@@ -148,10 +150,13 @@ export default function ChatInterface() {
     }
 
     const handleCardClick = (prompt: string) => {
-        // Dashboard açık kalsın mı? Kullanıcı isteğine göre, şimdilik kapatmıyoruz.
-        // Mobilde kapatmak mantıklı olabilir ama masaüstünde yan panelde kalması daha iyi.
         if (window.innerWidth < 1024) setIsDashboardOpen(false);
         handleSendMessage(null, prompt);
+    };
+
+    const handleBriefing = () => {
+        const prompt = "Bana bugünün şirket özetini çıkar: Toplam ciro, yeni müşteriler, stoktaki kritik ürünler ve bekleyen siparişler hakkında kısa, net ve yönetici özeti formatında bilgi ver. Sayısal verileri vurgula.";
+        handleCardClick(prompt);
     };
 
     useEffect(() => {
@@ -252,6 +257,34 @@ export default function ChatInterface() {
         updateCurrentSessionMessages(updatedMessages);
         setInputValue('')
         setIsLoading(true)
+        setReasoningSteps([])
+        setCurrentStepIndex(0)
+
+        // Simulate Reasoning Steps
+        const steps = [
+            "İstek analiz ediliyor...",
+            "Odoo veritabanına bağlanılıyor...",
+            "İlgili modüller taranıyor...",
+            "Veriler görselleştiriliyor..."
+        ];
+
+        let stepInterval: any;
+        let stepCount = 0;
+
+        stepInterval = setInterval(() => {
+            if (stepCount < steps.length) {
+                setReasoningSteps(prev => {
+                    const next = [...prev];
+                    if (stepCount > 0) next[stepCount - 1] = next[stepCount - 1] + " ✅"; // Mark previous as done
+                    next.push(steps[stepCount]);
+                    return next;
+                });
+                setCurrentStepIndex(stepCount);
+                stepCount++;
+            } else {
+                clearInterval(stepInterval);
+            }
+        }, 800);
 
         try {
             const response = await fetch('/api/chat', {
@@ -269,6 +302,8 @@ export default function ChatInterface() {
             const data = await response.json();
             if (isSpeechEnabled) speakText(data.content);
 
+            clearInterval(stepInterval);
+            setReasoningSteps([]); // Clear steps when done
             const botMessage: Message = {
                 id: (Date.now() + 1).toString(),
                 role: 'bot',
@@ -280,6 +315,8 @@ export default function ChatInterface() {
 
             updateCurrentSessionMessages([...updatedMessages, botMessage]);
         } catch (err: any) {
+            clearInterval(stepInterval);
+            setReasoningSteps([]);
             console.error('Chat API Error:', err)
             updateCurrentSessionMessages([...updatedMessages, {
                 id: (Date.now() + 1).toString(),
@@ -395,10 +432,19 @@ export default function ChatInterface() {
                     ))}
                     {isLoading && (
                         <div className={`${styles.message} ${styles.botMessage}`}>
-                            <div className={styles.loading}>
-                                <div className={styles.dot}></div>
-                                <div className={styles.dot}></div>
-                                <div className={styles.dot}></div>
+                            <div className={styles.reasoningContainer}>
+                                <div className={styles.reasoningHeader}>
+                                    <Sparkles size={16} className={styles.sparkleIcon} />
+                                    <span>Yapay Zeka Düşünüyor...</span>
+                                </div>
+                                <div className={styles.stepsList}>
+                                    {reasoningSteps.map((step, index) => (
+                                        <div key={index} className={`${styles.stepItem} ${index === currentStepIndex ? styles.stepActive : styles.stepDone}`}>
+                                            {index < currentStepIndex ? <CheckCircle2 size={14} color="#10b981" /> : <Loader2 size={14} className={styles.stepLoader} />}
+                                            <span>{step.replace(" ✅", "")}</span>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     )}
@@ -432,6 +478,16 @@ export default function ChatInterface() {
                 <div className={styles.dashboardList}>
                     {dashboardStats ? (
                         <>
+                            <div className={styles.briefingCard} onClick={handleBriefing}>
+                                <div className={styles.briefingHeader}>
+                                    <div className={styles.briefingIcon}>
+                                        <Zap size={20} fill="white" />
+                                    </div>
+                                    <span className={styles.briefingTitle}>Günlük Özet Al</span>
+                                </div>
+                                <div className={styles.briefingDesc}>Yapay zeka ile anlık durum analizi</div>
+                            </div>
+
                             <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Tüm müşterileri listele")}>
                                 <div className={styles.cardHeaderSmall}>
                                     <div className={styles.cardIconSmall}>
