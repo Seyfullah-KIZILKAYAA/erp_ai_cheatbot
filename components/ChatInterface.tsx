@@ -8,6 +8,7 @@ import autoTable from 'jspdf-autotable'
 import styles from './ChatInterface.module.css'
 import DynamicWidget from './DynamicComponents'
 
+
 interface Message {
     id: string
     role: 'user' | 'bot'
@@ -15,7 +16,13 @@ interface Message {
     timestamp: Date
     data?: any
     ui_component?: 'table' | 'chart' | 'stat' | 'trend'
+    metadata?: {
+        agent?: string
+        confidence?: number
+        reasoning?: string
+    }
 }
+
 
 interface ChatSession {
     id: string
@@ -310,8 +317,10 @@ export default function ChatInterface() {
                 content: data.content,
                 data: data.data,
                 ui_component: data.ui_component,
+                metadata: data.metadata,
                 timestamp: new Date()
             }
+
 
             updateCurrentSessionMessages([...updatedMessages, botMessage]);
         } catch (err: any) {
@@ -441,7 +450,7 @@ export default function ChatInterface() {
                                     {reasoningSteps.map((step, index) => (
                                         <div key={index} className={`${styles.stepItem} ${index === currentStepIndex ? styles.stepActive : styles.stepDone}`}>
                                             {index < currentStepIndex ? <CheckCircle2 size={14} color="#10b981" /> : <Loader2 size={14} className={styles.stepLoader} />}
-                                            <span>{step.replace(" ✅", "")}</span>
+                                            <span>{typeof step === 'string' ? step.replace(" ✅", "") : ''}</span>
                                         </div>
                                     ))}
                                 </div>
