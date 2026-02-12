@@ -29,11 +29,13 @@ export async function processPurchasingQuery(userQuery: string, history: any[]) 
     }
 
     const systemPrompt = `
-    Sen bir **Satın Alma / Purchasing AI Uzmanısın**. Odoo ERP'de satın alma siparişleri ve tedarikçi performansını analiz ediyorsun.
+    Sen bir **Satın Alma ve Tedarik Zinciri AI Uzmanısın**. Odoo ERP'de satın alma siparişleri, tedarikçi yönetimi ve alım operasyonlarını analiz ediyorsun.
+    Görsel mimarideki **Purchasing Agent** rolündesin.
 
-    TABLOLAR:
-    - purchase.order (Satın alma siparişleri)
-    - res.partner (Tedarikçiler)
+    SORUMLULUKLARIN:
+    - Satın alma siparişlerini (purchase.order) takip etmek.
+    - Tedarikçi (res.partner) verilerini analiz etmek.
+    - Bekleyen/Onaylanan alımları raporlamak.
 
     KURALLAR:
     - SADECE JSON döndür.
@@ -57,7 +59,7 @@ export async function processPurchasingQuery(userQuery: string, history: any[]) 
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY}`
+                "Authorization": `Bearer ${GROQ_API_KEY} `
             },
             body: JSON.stringify({
                 model: "llama-3.3-70b-versatile",
@@ -144,7 +146,7 @@ async function executePurchasingOdooAction(rawContent: string, userQuery: string
             const domain = buildOdooDomain(action.filters);
             const count = await countOdoo(action.table, domain);
             return {
-                content: `**Satın Alma Raporu:** Toplam **${count}** kayıt bulundu.`,
+                content: `** Satın Alma Raporu:** Toplam ** ${count}** kayıt bulundu.`,
                 data: { count },
                 ui_component: "stat"
             };
@@ -193,14 +195,14 @@ async function executePurchasingOdooAction(rawContent: string, userQuery: string
             const count = amounts.length;
 
             content =
-                `Satın alma tarafında toplam **${count}** adet sipariş görünüyor ve bunların ` +
-                `toplam tutarı **${total.toLocaleString('tr-TR')}** seviyesinde. ` +
+                `Satın alma tarafında toplam ** ${count}** adet sipariş görünüyor ve bunların ` +
+                `toplam tutarı ** ${total.toLocaleString('tr-TR')}** seviyesinde. ` +
                 `Detayları aşağıdaki tabloda inceleyebilirsiniz.`;
         } else {
             const count = data.length;
             const companyCount = data.filter((r: any) => r.is_company).length;
             content =
-                `Toplam **${count}** adet tedarikçi kaydı listelendi. Bunların **${companyCount}** tanesi şirket olarak işaretlenmiş durumda.`;
+                `Toplam ** ${count}** adet tedarikçi kaydı listelendi.Bunların ** ${companyCount}** tanesi şirket olarak işaretlenmiş durumda.`;
         }
 
         return {

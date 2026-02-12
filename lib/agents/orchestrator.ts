@@ -12,36 +12,37 @@ export interface AgentRoute {
     agents: ('sales' | 'finance' | 'inventory' | 'purchasing' | 'hr' | 'crm')[];
     confidence: number;
     reasoning: string;
+    analysis: string; // Brain analysis as shown in the visual
 }
 
 export async function routeToAgent(userQuery: string, history: any[]): Promise<AgentRoute> {
     const systemPrompt = `
-    Sen bir ERP AI Orchestrator'sın. Kullanıcı taleplerine göre doğru uzman ajanları seçersin.
-    
-    MEVCUT AJANLAR:
-    - **sales**: Satışlar, siparişler, müşteriler, teklifler, gelir.
-    - **finance**: Faturalar, ödemeler, borç/alacak, nakit akışı.
-    - **inventory**: Stoklar, ürünler, depo durumu, kritik stoklar.
-    - **purchasing**: Satın alma siparişleri, tedarikçiler, bekleyen satın almalar, maliyet.
-    - **hr**: Çalışanlar, vardiyalar, izinler, İK metrikleri.
-    - **crm**: Adaylar (leads), fırsatlar (opportunities), satış hunisi, kazanma oranları.
+    Sen bir **Multi-Agent ERP AI Orchestrator** sinir merkezisin. 
+    Görevin, kullanıcıdan gelen doğal dil sorgularını analiz etmek ve bunları en uygun uzman departman ajanlarına (Agents) yönlendirmektir.
 
-    GÖREVİN:
-    1. Kullanıcı spesifik bir şey sorarsa (örn: "Faturalarım"), SADECE o ajanı seç (["finance"]).
-    2. Eğer soru birden fazla alanla ilgiliyse (örn: "Satılan ürünlerin stoğu"), ilgili tüm ajanları seç (["sales", "inventory"]).
-    3. **Executive Summary / Şirket Özeti**: Kullanıcı şirket genel durumu, günlük özet, dashboard özeti gibi genel bir rapor isterse en az ["sales", "finance", "inventory"] ajanlarını; gerekliyse ["purchasing"] ve ["crm"] ajanlarını da ekle.
-    4. İnsan kaynağı, çalışan, izin gibi konular geçiyorsa mutlaka ["hr"] ajanını ekle.
+    GÖRSEL MİMARİDEKİ AJANLARIN VE SORUMLULUKLARI:
+    1. **CRM Agent**: Adaylar (Leads), Müşteri Temasları (Contacts), Fırsatlar (Opportunities), Satış Hunisi ve Raporlar.
+    2. **HR Agent**: Çalışan Bilgileri (Employees), İzinler (Leaves), Vardiyalar/Devamlılık (Attendance), İK Metrikleri.
+    3. **Inventory Agent**: Stok Seviyeleri, Ürünler, Depo Hareketleri, Kritik Stok Analizleri.
+    4. **Finance Agent**: Faturalar (Invoices), Ödemeler (Payments), Finansal Durum, Borç/Alacak.
+    5. **Purchasing Agent**: Satın Alma Siparişleri (PO), Tedarikçiler, İtemlar, Bekleyen Alımlar.
+    6. **Sales Agent**: Satış Siparişleri (Orders), Müşteri Verileri, Gelir Analizi, Teklifler.
 
-    KURALLAR:
-    - SADECE JSON döndür.
-    - agents dizisi boş olamaz.
-    - Confidence (0-100) ve Reasoning (neden seçtin) alanlarını doldur.
+    YÖNLENDİRME STRATEJİSİ:
+    - **Tekil Sorumluluk**: Eğer soru net bir departmanı ilgilendiriyorsa (örn: "Bu ayki faturalar"), sadece ilgili ajanı seç.
+    - **Karmaşık / Çoklu Sorumluluk**: Soru birden fazla alanı kapsıyorsa (örn: "En çok satılan ürünün stok durumu"), ilgili tüm ajanları seç (Sales + Inventory).
+    - **Yönetici Özeti / Şirket Genel Durumu**: Eğer kullanıcı genel bir rapor veya özet isterse tüm ana departmanları (Sales, Finance, Inventory, Purchasing, CRM) seç.
+
+    KURAL: 
+    - SADECE JSON formatında yanıt ver. 
+    - "analysis" alanında soruyu nasıl anladığını ve neden bu ajanları seçtiğini kısaca açıkla (Analiz cümlesi 1-2 cümle olsun).
 
     ÇIKTI FORMATI:
     {
-        "agents": ["sales", "finance", "inventory"],
+        "agents": ["finance"],
         "confidence": 100,
-        "reasoning": "Kullanıcı şirket genel özeti istedi."
+        "analysis": "Kullanıcı ödenmemiş faturaları sorduğu için Finans departmanı görevlendirildi.",
+        "reasoning": "account.move tablosundaki ödeme durumu 'not_paid' olan kayıtları inceleyeceğiz."
     }
     `;
 
@@ -63,7 +64,7 @@ export async function routeToAgent(userQuery: string, history: any[]): Promise<A
                     { role: "user", content: `Kullanıcı Sorusu: "${userQuery}"` }
                 ],
                 temperature: 0.1,
-                max_tokens: 300,
+                max_tokens: 400,
                 response_format: { type: "json_object" }
             })
         });
@@ -91,6 +92,7 @@ export async function routeToAgent(userQuery: string, history: any[]): Promise<A
             return {
                 agents: ['sales'],
                 confidence: 50,
+                analysis: "Sorgu analizi sırasında bir hata oluştu, varsayılan olarak Satış departmanına yönlendirildi.",
                 reasoning: "JSON ayrıştırma hatası (" + (parseError as Error).message + ")"
             };
         }
@@ -101,6 +103,7 @@ export async function routeToAgent(userQuery: string, history: any[]): Promise<A
         return {
             agents: ['sales'],
             confidence: 30,
+            analysis: "Sistem hatası nedeniyle sorgu analiz edilemedi.",
             reasoning: "Hata nedeniyle varsayılan agent seçildi"
         };
     }

@@ -12,10 +12,13 @@ const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 export async function processFinanceQuery(userQuery: string, history: any[]) {
     const systemPrompt = `
-    Sen bir **Finans AI Uzmanısın**. Odoo ERP'de fatura ve ödeme analiz ediyorsun.
-    TABLOLAR:
-    - account.move
-    - account.payment
+    Sen bir **Finans ve Muhasebe AI Uzmanısın**. Odoo ERP'de faturalar, ödemeler ve finansal performansı analiz ediyorsun.
+    Görsel mimarideki **Finance Agent** rolündesin.
+
+    SORUMLULUKLARIN:
+    - Müşteri ve tedarikçi faturalarını (account.move) analiz etmek.
+    - Ödemeleri (account.payment) takip etmek.
+    - Nakit akışı ve ödenmemiş fatura raporları hazırlamak.
 
     KURALLAR:
     - SADECE JSON döndür.

@@ -63,11 +63,13 @@ export async function processSalesQuery(userQuery: string, history: any[]) {
     }
 
     const systemPrompt = `
-    Sen bir **Satış Departmanı AI Uzmanısın**. Odoo ERP sisteminde satış ve müşteri verilerini analiz ediyorsun.
+    Sen bir **Satış Departmanı AI Uzmanısın**. Odoo ERP sisteminde satış siparişleri, müşteri verileri ve gelir analizlerini yönetiyorsun.
+    Görsel mimarideki **Sales Agent** rolündesin.
 
-    TABLOLAR:
-    - sale.order
-    - res.partner
+    SORUMLULUKLARIN:
+    - Satış siparişlerini (sale.order) ve teklifleri analiz etmek.
+    - Müşteri (res.partner) portföyünü raporlamak.
+    - Satış gelirleri ve trendleri hakkında özetler hazırlamak.
 
     KURALLAR:
     - SADECE JSON döndür.
@@ -187,14 +189,14 @@ async function executeOdooAction(rawContent: string, userQuery: string) {
             return filters
                 .filter((f: any) => f && typeof f.column === "string" && f.column.trim() && allowedColumns.includes(f.column))
                 .map((f: any) => {
-                if (f.operator === 'ilike') return [f.column, 'ilike', f.value];
-                if (f.operator === 'eq') return [f.column, '=', f.value];
-                if (f.operator === 'gt') return [f.column, '>', f.value];
-                if (f.operator === 'lt') return [f.column, '<', f.value];
-                if (f.operator === 'gte') return [f.column, '>=', f.value];
-                if (f.operator === 'lte') return [f.column, '<=', f.value];
-                return [f.column, '=', f.value];
-            });
+                    if (f.operator === 'ilike') return [f.column, 'ilike', f.value];
+                    if (f.operator === 'eq') return [f.column, '=', f.value];
+                    if (f.operator === 'gt') return [f.column, '>', f.value];
+                    if (f.operator === 'lt') return [f.column, '<', f.value];
+                    if (f.operator === 'gte') return [f.column, '>=', f.value];
+                    if (f.operator === 'lte') return [f.column, '<=', f.value];
+                    return [f.column, '=', f.value];
+                });
         };
 
         if (action.type === 'count') {

@@ -45,9 +45,11 @@ export async function POST(req: Request) {
             ? {
                 agents: forcedAgents,
                 confidence: 100,
-                reasoning: "Rule-based yönlendirme: önceden tanımlı iş komutu"
+                analysis: "Önceden tanımlı iş komutu algılandı, ilgili departmanlar doğrudan görevlendirildi.",
+                reasoning: "Kullanıcı spesifik bir sistem komutu kullandı."
             }
             : await routeToAgent(message, history);
+
         console.log(`🧠 [ORCHESTRATOR] Routing decision:`, route);
 
         // Step 2: Process query with selected agent(s)
@@ -63,43 +65,37 @@ export async function POST(req: Request) {
         const agentResults = await Promise.all(
             uniqueAgents.map(async (agentKey) => {
                 const key = agentKey.toLowerCase();
-
+                // ... (rest of the mapping code stays same)
                 if (key === 'finance') {
                     const name = '💰 Finance Agent';
                     console.log(`💰 [FINANCE AGENT] Processing query...`);
                     const res = await processFinanceQuery(message, history);
                     return { key, name, ...res };
                 }
-
                 if (key === 'inventory') {
                     const name = '📦 Inventory Agent';
                     console.log(`📦 [INVENTORY AGENT] Processing query...`);
                     const res = await processInventoryQuery(message, history);
                     return { key, name, ...res };
                 }
-
                 if (key === 'purchasing' || key === 'purchase') {
                     const name = '🧾 Purchasing Agent';
                     console.log(`🧾 [PURCHASING AGENT] Processing query...`);
                     const res = await processPurchasingQuery(message, history);
                     return { key, name, ...res };
                 }
-
                 if (key === 'hr' || key === 'human_resources') {
                     const name = '👥 HR Agent';
                     console.log(`👥 [HR AGENT] Processing query...`);
                     const res = await processHrQuery(message, history);
                     return { key, name, ...res };
                 }
-
                 if (key === 'crm') {
                     const name = '📈 CRM Agent';
                     console.log(`📈 [CRM AGENT] Processing query...`);
                     const res = await processCrmQuery(message, history);
                     return { key, name, ...res };
                 }
-
-                // default: sales
                 const name = '💼 Sales Agent';
                 console.log(`💼 [SALES AGENT] Processing query...`);
                 const res = await processSalesQuery(message, history);
@@ -113,20 +109,23 @@ export async function POST(req: Request) {
         const headerEmoji = route.confidence >= 80 ? '✅' : '🤔';
 
         const finalContentParts = agentResults.map((result) => {
-            return `**${result.name}** ${headerEmoji}\n\n${result.content}`;
+            return `### ${result.name} ${headerEmoji}\n\n${result.content}`;
         });
 
         let finalContent = "";
 
+        // Orchestrator Analysis Section
+        const orchestratorAnalysis = `> **🧠 Orchestrator Analizi:** ${route.analysis}\n\n`;
+
         if (multiAgent) {
             const orchestratorHeader = isSummary
-                ? `### 📊 Yönetici Özeti\n*Sorgun tüm departmanlar tarafından analiz edildi ve aşağıdaki rapor hazırlandı.*\n\n`
-                : `**🔀 Orchestrator:** Talebiniz için birden fazla departman çalıştı.\n\n`;
+                ? `## 📊 Yönetici Özeti\n*Talebiniz tüm departmanlar tarafından analiz edildi ve aşağıdaki rapor hazırlandı.*\n\n`
+                : `**🔀 Multi-Agent Workflow:** Talebiniz için birden fazla departman paralel olarak çalıştı.\n\n`;
 
-            finalContent = orchestratorHeader + finalContentParts.join(`\n\n---\n\n`);
+            finalContent = orchestratorAnalysis + orchestratorHeader + finalContentParts.join(`\n\n---\n\n`);
         } else {
-            // Tek bir agent varsa orchestrator bilgisini gizle, direkt agent yanıtını ver
-            finalContent = finalContentParts[0];
+            // Tek bir agent olsa bile analizi gösterelim ki "Orchestrator" hissi korunsun
+            finalContent = orchestratorAnalysis + finalContentParts[0];
         }
 
         const primaryResult = agentResults[0];
@@ -143,6 +142,7 @@ export async function POST(req: Request) {
                 agent: agentLabel,
                 confidence: route.confidence,
                 reasoning: route.reasoning,
+                analysis: route.analysis,
                 multi_agent: multiAgent
             }
         });

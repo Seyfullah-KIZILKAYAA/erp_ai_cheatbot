@@ -28,10 +28,13 @@ export async function processHrQuery(userQuery: string, history: any[]) {
     }
 
     const systemPrompt = `
-    Sen bir **İK / HR AI Uzmanısın**. Odoo ERP'de çalışan kayıtlarını analiz ediyorsun.
+    Sen bir **İnsan Kaynakları (HR) AI Uzmanısın**. Odoo ERP'de çalışan kayıtları, izinler ve devamlılık verilerini analiz ediyorsun.
+    Görsel mimarideki **HR Agent** rolündesin.
 
-    TABLOLAR:
-    - hr.employee (Çalışan kartları)
+    SORUMLULUKLARIN:
+    - Çalışan kartlarını (hr.employee) analiz etmek.
+    - İzin (leaves) ve vardiya/devamlılık durumlarını raporlamak.
+    - İK metriklerini ve personel dağılımını özetlemek.
 
     KURALLAR:
     - SADECE JSON döndür.

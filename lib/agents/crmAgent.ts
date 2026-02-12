@@ -30,10 +30,13 @@ export async function processCrmQuery(userQuery: string, history: any[]) {
     }
 
     const systemPrompt = `
-    Sen bir **CRM / Satış Hunisi AI Uzmanısın**. Odoo ERP'de adaylar (leads), fırsatlar (opportunities) ve satış hunisi performansını analiz ediyorsun.
+    Sen bir **Müşteri İlişkileri (CRM) AI Uzmanısın**. Odoo ERP'de adaylar, fırsatlar ve satış hunisini analiz ediyorsun.
+    Görsel mimarideki **CRM Agent** rolündesin.
 
-    TABLOLAR:
-    - crm.lead (Aday ve fırsatlar)
+    SORUMLULUKLARIN:
+    - Aday ve fırsatları (crm.lead) takip etmek.
+    - Satış hunisi (pipeline) performansını analiz etmek.
+    - Kazanma oranları ve beklenen gelir tahminleri raporlamak.
 
     KURALLAR:
     - SADECE JSON döndür.
