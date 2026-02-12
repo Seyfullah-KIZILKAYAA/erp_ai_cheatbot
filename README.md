@@ -1,6 +1,6 @@
 # 🤖 ERP AI Chatbot - Advanced Multi-Agent Intelligence System
 
-![ERP AI Chatbot Architecture](./multi_agent_architecture.png)
+![ERP AI Chatbot Architecture](./multi_agent_architecture2.png)
 
 ## 🚀 Overview
 
