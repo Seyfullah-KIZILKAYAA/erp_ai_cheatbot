@@ -6,6 +6,7 @@
  */
 
 import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -37,43 +38,62 @@ export async function processInventoryQuery(userQuery: string, history: any[]) {
     - Ürün bazlı stok durumu raporlamak.
 
     KURALLAR:
-    - SADECE JSON döndür.
+    - SADECE GEÇERLİ JSON formatında yanıt ver. Hiçbir ek metin ekleme.
     - **Sayısal Veri**: ASLA markdown kullanma. Saf sayı kullan.
     - **Özet Talebi**: Eğer özet istenirse, stoktaki kritik ürünleri listele. Veri yoksa "Kritik seviyede ürün bulunmuyor" bilgisi ver.
-    ÇIKTI FORMATI:
+    - **Limit**: Varsayılan limit 50 olsun, ancak kullanıcı "tüm" derse limit'i 500'e çıkar.
+    - **Kritik Stok**: qty_available < 10 olan ürünler kritik kabul edilir.
+
+    GEÇERLİ ALANLAR (product.product için):
+    - id, name, qty_available, list_price, default_code
+
+    GEÇERLİ ALANLAR (stock.quant için):
+    - id, product_id, location_id, quantity, reserved_quantity
+
+    GEÇERLİ ALANLAR (stock.move için):
+    - id, product_id, date, quantity, state, location_id, location_dest_id
+
+    ÇIKTI FORMATI (ZORUNLU):
     {
         "type": "query",
         "table": "product.product",
         "filters": [{"column": "qty_available", "operator": "lt", "value": 10}],
-        "fields": ["name", "qty_available", "list_price"],
-        "limit": 10,
+        "fields": ["name", "qty_available", "list_price", "default_code"],
+        "limit": 50,
         "order": "qty_available ASC",
         "display": "table"
     }
     `;
 
     try {
-        const response = await fetch(GROQ_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    ...history.slice(-5).map((msg: any) => ({
-                        role: msg.role === 'bot' ? 'assistant' : 'user',
-                        content: msg.content
-                    })),
-                    { role: "user", content: userQuery }
-                ],
-                temperature: 0.1,
-                max_tokens: 800,
-                response_format: { type: "json_object" }
-            })
-        });
+        const response = await withRetry(
+            () => withTimeout(
+                () => fetch(GROQ_API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${GROQ_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "llama-3.3-70b-versatile",
+                        messages: [
+                            { role: "system", content: systemPrompt },
+                            ...history.slice(-5).map((msg: any) => ({
+                                role: msg.role === 'bot' ? 'assistant' : 'user',
+                                content: msg.content
+                            })),
+                            { role: "user", content: userQuery }
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 800,
+                        response_format: { type: "json_object" }
+                    })
+                }),
+                12000, // 12 second timeout
+                'Inventory Agent LLM request timed out'
+            ),
+            { maxRetries: 2, baseDelay: 1000 }
+        );
 
         if (!response.ok) {
             return { content: "Stok AI yanıt vermedi.", data: null, ui_component: null };
@@ -232,42 +252,4 @@ async function executeInventoryOdooAction(rawContent: string, userQuery: string)
     }
 }
 
-async function generateInventorySummary(data: any[], userQuery: string): Promise<string> {
-    try {
-        const response = await fetch(GROQ_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    {
-                        role: "system",
-                        content: `Sen bir Stok Analisti'sin. Gelen stok verilerini analiz et ve kısa, profesyonel bir özet yaz.
-                        
-                        KURALLAR:
-                        - Verileri tek tek listeleme (tablo zaten gösterilecek)
-                        - Kritik stoklar ve hareket trendlerini vurgula
-                        - Sayısal verileri özetle (toplam stok, ortalama vb.)
-                        - **KRİTİK: Tüm sayısal miktarları mutlaka KALIN (bold) formatta yaz (ör: **25 adet**).**
-                        - Maksimum 3-4 cümle yaz
-                        - Stok / lojistik departmanı perspektifinden yaz`
-                    },
-                    {
-                        role: "user",
-                        content: `Kullanıcı Sorusu: ${userQuery}\n\nVeri: ${JSON.stringify(data).slice(0, 2000)}`
-                    }
-                ]
-            })
-        });
-
-        const summaryData = await response.json();
-        return summaryData.choices[0]?.message?.content || "Stok verileri hazır.";
-
-    } catch (error) {
-        return "**Stok Departmanı:** Veriler başarıyla getirildi.";
-    }
-}
 

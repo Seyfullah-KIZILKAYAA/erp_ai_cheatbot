@@ -33,6 +33,7 @@ interface ChatSession {
 
 const SESSIONS_KEY = 'erp_chat_sessions';
 const SPEECH_KEY = 'erp_speech_enabled';
+const MEMORY_SESSION_KEY = 'erp_memory_session_id';
 const MAX_SESSIONS = 15;
 
 export default function ChatInterface() {
@@ -55,6 +56,19 @@ export default function ChatInterface() {
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(true)
     const [isDashboardOpen, setIsDashboardOpen] = useState(true)
+
+    // Memory session ID for entity tracking
+    const [memorySessionId] = useState(() => {
+        if (typeof window !== 'undefined') {
+            let sid = localStorage.getItem(MEMORY_SESSION_KEY);
+            if (!sid) {
+                sid = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                localStorage.setItem(MEMORY_SESSION_KEY, sid);
+            }
+            return sid;
+        }
+        return `session-${Date.now()}`;
+    })
 
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const recognitionRef = useRef<any>(null)
@@ -302,7 +316,8 @@ export default function ChatInterface() {
                     history: messages,
                     userContext: {
                         username: 'Misafir'
-                    }
+                    },
+                    sessionId: memorySessionId
                 })
             });
 

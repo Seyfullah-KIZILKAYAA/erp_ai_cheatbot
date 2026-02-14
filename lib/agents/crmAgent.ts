@@ -6,6 +6,7 @@
  */
 
 import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -39,43 +40,55 @@ export async function processCrmQuery(userQuery: string, history: any[]) {
     - Kazanma oranları ve beklenen gelir tahminleri raporlamak.
 
     KURALLAR:
-    - SADECE JSON döndür.
-    - "açık fırsatlar", "kazanılan fırsatlar" gibi ifadeleri stage_id ve probability alanları ile ilişkilendirmeye çalış.
+    - SADECE GEÇERLİ JSON formatında yanıt ver. Hiçbir ek metin ekleme.
+    - "açık fırsatlar" → probability > 0 filtresi kullan
+    - "kazanılan fırsatlar" → probability >= 100 filtresi kullan
+    - **Limit**: Varsayılan limit 50 olsun, ancak kullanıcı "tüm" derse limit'i 500'e çıkar.
 
-    ÇIKTI ÖRNEĞİ:
+    GEÇERLİ ALANLAR (crm.lead için):
+    - id, name, partner_id, stage_id, probability, expected_revenue
+
+    ÇIKTI FORMATI (ZORUNLU):
     {
         "type": "query",
         "table": "crm.lead",
         "filters": [],
         "fields": ["name", "partner_id", "stage_id", "probability", "expected_revenue"],
-        "limit": 30,
+        "limit": 50,
         "order": "probability DESC",
         "display": "table"
     }
     `;
 
     try {
-        const response = await fetch(GROQ_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    ...history.slice(-5).map((msg: any) => ({
-                        role: msg.role === 'bot' ? 'assistant' : 'user',
-                        content: msg.content
-                    })),
-                    { role: "user", content: userQuery }
-                ],
-                temperature: 0.1,
-                max_tokens: 600,
-                response_format: { type: "json_object" }
-            })
-        });
+        const response = await withRetry(
+            () => withTimeout(
+                () => fetch(GROQ_API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${GROQ_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "llama-3.3-70b-versatile",
+                        messages: [
+                            { role: "system", content: systemPrompt },
+                            ...history.slice(-5).map((msg: any) => ({
+                                role: msg.role === 'bot' ? 'assistant' : 'user',
+                                content: msg.content
+                            })),
+                            { role: "user", content: userQuery }
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 600,
+                        response_format: { type: "json_object" }
+                    })
+                }),
+                12000, // 12 second timeout
+                'CRM Agent LLM request timed out'
+            ),
+            { maxRetries: 2, baseDelay: 1000 }
+        );
 
         if (!response.ok) {
             return {

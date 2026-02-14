@@ -6,6 +6,7 @@
  */
 
 import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -38,44 +39,58 @@ export async function processPurchasingQuery(userQuery: string, history: any[]) 
     - Bekleyen/Onaylanan alımları raporlamak.
 
     KURALLAR:
-    - SADECE JSON döndür.
+    - SADECE GEÇERLİ JSON formatında yanıt ver. Hiçbir ek metin ekleme.
     - Tarih filtreleri için '>=', '<=' kullan.
     - "Bekleyen satın almalar" veya "onay bekleyen siparişler" denirse state = 'purchase' veya 'to approve' gibi statüleri filtrelemeye çalış.
+    - **Limit**: Varsayılan limit 50 olsun, ancak kullanıcı "tüm" derse limit'i 500'e çıkar.
 
-    ÇIKTI ÖRNEĞİ:
+    GEÇERLİ ALANLAR (purchase.order için):
+    - id, name, partner_id, amount_total, state, date_order
+
+    GEÇERLİ ALANLAR (res.partner için):
+    - id, name, email, phone, city, is_company
+
+    ÇIKTI FORMATI (ZORUNLU):
     {
         "type": "query",
         "table": "purchase.order",
         "filters": [{"column": "state", "operator": "eq", "value": "purchase"}],
         "fields": ["name", "partner_id", "amount_total", "state", "date_order"],
-        "limit": 20,
+        "limit": 50,
         "order": "date_order DESC",
         "display": "table"
     }
     `;
 
     try {
-        const response = await fetch(GROQ_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY} `
-            },
-            body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    ...history.slice(-5).map((msg: any) => ({
-                        role: msg.role === 'bot' ? 'assistant' : 'user',
-                        content: msg.content
-                    })),
-                    { role: "user", content: userQuery }
-                ],
-                temperature: 0.1,
-                max_tokens: 600,
-                response_format: { type: "json_object" }
-            })
-        });
+        const response = await withRetry(
+            () => withTimeout(
+                () => fetch(GROQ_API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${GROQ_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "llama-3.3-70b-versatile",
+                        messages: [
+                            { role: "system", content: systemPrompt },
+                            ...history.slice(-5).map((msg: any) => ({
+                                role: msg.role === 'bot' ? 'assistant' : 'user',
+                                content: msg.content
+                            })),
+                            { role: "user", content: userQuery }
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 600,
+                        response_format: { type: "json_object" }
+                    })
+                }),
+                12000, // 12 second timeout
+                'Purchasing Agent LLM request timed out'
+            ),
+            { maxRetries: 2, baseDelay: 1000 }
+        );
 
         if (!response.ok) {
             return {
@@ -146,7 +161,7 @@ async function executePurchasingOdooAction(rawContent: string, userQuery: string
             const domain = buildOdooDomain(action.filters);
             const count = await countOdoo(action.table, domain);
             return {
-                content: `** Satın Alma Raporu:** Toplam ** ${count}** kayıt bulundu.`,
+                content: `**Satın Alma Raporu:** Toplam **${count}** kayıt bulundu.`,
                 data: { count },
                 ui_component: "stat"
             };
@@ -195,14 +210,14 @@ async function executePurchasingOdooAction(rawContent: string, userQuery: string
             const count = amounts.length;
 
             content =
-                `Satın alma tarafında toplam ** ${count}** adet sipariş görünüyor ve bunların ` +
-                `toplam tutarı ** ${total.toLocaleString('tr-TR')}** seviyesinde. ` +
+                `Satın alma tarafında toplam **${count}** adet sipariş görünüyor ve bunların ` +
+                `toplam tutarı **${total.toLocaleString('tr-TR')}** seviyesinde. ` +
                 `Detayları aşağıdaki tabloda inceleyebilirsiniz.`;
         } else {
             const count = data.length;
             const companyCount = data.filter((r: any) => r.is_company).length;
             content =
-                `Toplam ** ${count}** adet tedarikçi kaydı listelendi.Bunların ** ${companyCount}** tanesi şirket olarak işaretlenmiş durumda.`;
+                `Toplam **${count}** adet tedarikçi kaydı listelendi. Bunların **${companyCount}** tanesi şirket olarak işaretlenmiş durumda.`;
         }
 
         return {

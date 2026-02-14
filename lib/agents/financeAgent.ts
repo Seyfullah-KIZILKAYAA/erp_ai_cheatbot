@@ -6,6 +6,7 @@
  */
 
 import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -21,45 +22,59 @@ export async function processFinanceQuery(userQuery: string, history: any[]) {
     - Nakit akışı ve ödenmemiş fatura raporları hazırlamak.
 
     KURALLAR:
-    - SADECE JSON döndür.
+    - SADECE GEÇERLİ JSON formatında yanıt ver. Hiçbir ek metin ekleme.
     - Tarih filtreleri için '>=', '<=' kullan. Bugün: ${new Date().toISOString().split('T')[0]}
     - **Sayısal Veri**: ASLA markdown kullanma. Saf sayı kullan.
     - **Özet Talebi**: Eğer özet istenirse, bugün yapılmış onaylı faturaları (state='posted') ara. Eğer veri yoksa, "Bugün henüz onaylı fatura kaydı yok" bilgisini dön.
+    - **Limit**: Varsayılan limit 20 olsun, ancak kullanıcı "tüm" derse limit'i 500'e çıkar.
 
-    ÇIKTI FORMATI:
+    GEÇERLİ ALANLAR (account.move için):
+    - id, name, partner_id, amount_total, payment_state, state, invoice_date
+
+    GEÇERLİ ALANLAR (account.payment için):
+    - id, name, partner_id, amount, payment_type, date, state
+
+    ÇIKTI FORMATI (ZORUNLU):
     {
         "type": "query",
         "table": "account.move",
         "filters": [{"column": "state", "operator": "eq", "value": "posted"}],
-        "fields": ["name", "partner_id", "amount_total"],
-        "limit": 10,
+        "fields": ["name", "partner_id", "amount_total", "invoice_date"],
+        "limit": 20,
         "order": "invoice_date DESC",
         "display": "table"
     }
     `;
 
     try {
-        const response = await fetch(GROQ_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    ...history.slice(-5).map((msg: any) => ({
-                        role: msg.role === 'bot' ? 'assistant' : 'user',
-                        content: msg.content
-                    })),
-                    { role: "user", content: userQuery }
-                ],
-                temperature: 0.1,
-                max_tokens: 800,
-                response_format: { type: "json_object" }
-            })
-        });
+        const response = await withRetry(
+            () => withTimeout(
+                () => fetch(GROQ_API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${GROQ_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "llama-3.3-70b-versatile",
+                        messages: [
+                            { role: "system", content: systemPrompt },
+                            ...history.slice(-5).map((msg: any) => ({
+                                role: msg.role === 'bot' ? 'assistant' : 'user',
+                                content: msg.content
+                            })),
+                            { role: "user", content: userQuery }
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 800,
+                        response_format: { type: "json_object" }
+                    })
+                }),
+                12000, // 12 second timeout
+                'Finance Agent LLM request timed out'
+            ),
+            { maxRetries: 2, baseDelay: 1000 }
+        );
 
         if (!response.ok) {
             return { content: "Finans AI yanıt vermedi.", data: null, ui_component: null };
@@ -245,42 +260,4 @@ async function executeFinanceOdooAction(rawContent: string, userQuery: string) {
     }
 }
 
-async function generateFinanceSummary(data: any[], userQuery: string): Promise<string> {
-    try {
-        const response = await fetch(GROQ_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    {
-                        role: "system",
-                        content: `Sen bir Finans Analisti'sin. Gelen finansal verileri analiz et ve kısa, profesyonel bir özet yaz.
-                        
-                        KURALLAR:
-                        - Verileri tek tek listeleme (tablo zaten gösterilecek)
-                        - Nakit akışı, gecikmiş faturalar ve önemli tutarları vurgula
-                        - Sayısal verileri özetle (toplam, ortalama, en yüksek/düşük)
-                        - **KRİTİK: Tüm sayısal verileri ve para birimlerini mutlaka KALIN (bold) formatta yaz (ör: **50.000 TL**).**
-                        - Maksimum 3-4 cümle yaz
-                        - Finans departmanı perspektifinden yaz`
-                    },
-                    {
-                        role: "user",
-                        content: `Kullanıcı Sorusu: ${userQuery}\n\nVeri: ${JSON.stringify(data).slice(0, 2000)}`
-                    }
-                ]
-            })
-        });
-
-        const summaryData = await response.json();
-        return summaryData.choices[0]?.message?.content || "Finans verileri hazır.";
-
-    } catch (error) {
-        return "**Finans Departmanı:** Veriler başarıyla getirildi.";
-    }
-}
 

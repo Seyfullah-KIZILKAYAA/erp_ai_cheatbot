@@ -6,6 +6,7 @@
  */
 
 import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -72,45 +73,60 @@ export async function processSalesQuery(userQuery: string, history: any[]) {
     - Satış gelirleri ve trendleri hakkında özetler hazırlamak.
 
     KURALLAR:
-    - SADECE JSON döndür.
+    - SADECE GEÇERLİ JSON formatında yanıt ver. Hiçbir ek metin ekleme.
     - Tarih filtreleri için '>=', '<=' kullan. Bugün: ${new Date().toISOString().split('T')[0]}
     - **Sayısal Veri**: ASLA markdown (ör: **10**) kullanma. Saf sayı kullan.
     - **Özet Talebi**: Eğer özet istenirse, bugün yapılmış onaylı satışları (state='sale') ara. Eğer veri yoksa, "Bugün henüz onaylı satış yapılmadı" bilgisini dön.
+    - **Limit**: Varsayılan limit 50 olsun, ancak kullanıcı "tüm" derse limit'i 500'e çıkar.
+    - **Sıralama**: Tutara göre sıralama istenirse "amount_total DESC" kullan, tarihe göre sıralama istenirse "date_order DESC" kullan.
 
-    ÇIKTI FORMATI:
+    GEÇERLİ ALANLAR (sale.order için):
+    - id, name, partner_id, amount_total, state, date_order
+
+    GEÇERLİ ALANLAR (res.partner için):
+    - id, name, email, phone, city, is_company
+
+    ÇIKTI FORMATI (ZORUNLU):
     {
         "type": "query",
         "table": "sale.order",
         "filters": [{"column": "state", "operator": "eq", "value": "sale"}],
-        "fields": ["name", "partner_id", "amount_total"],
-        "limit": 10,
+        "fields": ["name", "partner_id", "amount_total", "date_order"],
+        "limit": 50,
         "order": "amount_total DESC",
         "display": "table"
     }
     `;
 
     try {
-        const response = await fetch(GROQ_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    ...history.slice(-5).map((msg: any) => ({
-                        role: msg.role === 'bot' ? 'assistant' : 'user',
-                        content: msg.content
-                    })),
-                    { role: "user", content: userQuery }
-                ],
-                temperature: 0.1,
-                max_tokens: 800,
-                response_format: { type: "json_object" }
-            })
-        });
+        const response = await withRetry(
+            () => withTimeout(
+                () => fetch(GROQ_API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${GROQ_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "llama-3.3-70b-versatile",
+                        messages: [
+                            { role: "system", content: systemPrompt },
+                            ...history.slice(-5).map((msg: any) => ({
+                                role: msg.role === 'bot' ? 'assistant' : 'user',
+                                content: msg.content
+                            })),
+                            { role: "user", content: userQuery }
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 800,
+                        response_format: { type: "json_object" }
+                    })
+                }),
+                12000, // 12 second timeout
+                'Sales Agent LLM request timed out'
+            ),
+            { maxRetries: 2, baseDelay: 1000 }
+        );
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -290,41 +306,3 @@ async function executeOdooAction(rawContent: string, userQuery: string) {
     }
 }
 
-async function generateSalesSummary(data: any[], userQuery: string): Promise<string> {
-    try {
-        const response = await fetch(GROQ_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    {
-                        role: "system",
-                        content: `Sen bir Satış Analisti'sin. Gelen satış verilerini analiz et ve kısa, profesyonel bir özet yaz.
-                        
-                        KURALLAR:
-                        - Verileri tek tek listeleme (tablo zaten gösterilecek)
-                        - Genel trendleri ve önemli bulguları vurgula
-                        - Sayısal verileri özetle (toplam, ortalama, en yüksek/düşük)
-                        - **KRİTİK: Tüm sayısal verileri, tutarları ve para birimi simgelerini (TL, $, €) mutlaka KALIN (bold) formatta yaz (ör: **150.000 TL**).**
-                        - Maksimum 3-4 cümle yaz
-                        - Satış departmanı perspektifinden yaz`
-                    },
-                    {
-                        role: "user",
-                        content: `Kullanıcı Sorusu: ${userQuery}\n\nVeri: ${JSON.stringify(data).slice(0, 2000)}`
-                    }
-                ]
-            })
-        });
-
-        const summaryData = await response.json();
-        return summaryData.choices[0]?.message?.content || "Satış verileri hazır.";
-
-    } catch (error) {
-        return "**Satış Departmanı:** Veriler başarıyla getirildi.";
-    }
-}

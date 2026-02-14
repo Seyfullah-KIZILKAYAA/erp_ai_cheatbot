@@ -6,6 +6,7 @@
  */
 
 import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -37,14 +38,18 @@ export async function processHrQuery(userQuery: string, history: any[]) {
     - İK metriklerini ve personel dağılımını özetlemek.
 
     KURALLAR:
-    - SADECE JSON döndür.
+    - SADECE GEÇERLİ JSON formatında yanıt ver. Hiçbir ek metin ekleme.
+    - **Limit**: Varsayılan limit 50 olsun, ancak kullanıcı "tüm" veya "hepsi" derse limit'i 500'e çıkar.
 
-    ÇIKTI ÖRNEĞİ:
+    GEÇERLİ ALANLAR (hr.employee için):
+    - id, name, work_email, mobile_phone, department_id, job_title
+
+    ÇIKTI FORMATI (ZORUNLU):
     {
         "type": "query",
         "table": "hr.employee",
         "filters": [],
-        "fields": ["name", "work_email", "mobile_phone", "department_id"],
+        "fields": ["name", "work_email", "mobile_phone", "department_id", "job_title"],
         "limit": 50,
         "order": "name ASC",
         "display": "table"
@@ -52,27 +57,34 @@ export async function processHrQuery(userQuery: string, history: any[]) {
     `;
 
     try {
-        const response = await fetch(GROQ_API_URL, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${GROQ_API_KEY}`
-            },
-            body: JSON.stringify({
-                model: "llama-3.3-70b-versatile",
-                messages: [
-                    { role: "system", content: systemPrompt },
-                    ...history.slice(-5).map((msg: any) => ({
-                        role: msg.role === 'bot' ? 'assistant' : 'user',
-                        content: msg.content
-                    })),
-                    { role: "user", content: userQuery }
-                ],
-                temperature: 0.1,
-                max_tokens: 600,
-                response_format: { type: "json_object" }
-            })
-        });
+        const response = await withRetry(
+            () => withTimeout(
+                () => fetch(GROQ_API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${GROQ_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "llama-3.3-70b-versatile",
+                        messages: [
+                            { role: "system", content: systemPrompt },
+                            ...history.slice(-5).map((msg: any) => ({
+                                role: msg.role === 'bot' ? 'assistant' : 'user',
+                                content: msg.content
+                            })),
+                            { role: "user", content: userQuery }
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 600,
+                        response_format: { type: "json_object" }
+                    })
+                }),
+                12000, // 12 second timeout
+                'HR Agent LLM request timed out'
+            ),
+            { maxRetries: 2, baseDelay: 1000 }
+        );
 
         if (!response.ok) {
             return {

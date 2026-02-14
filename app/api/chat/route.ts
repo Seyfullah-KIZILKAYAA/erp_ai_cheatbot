@@ -1,4 +1,4 @@
-// Last updated: Multi-Agent System Integration
+// Last updated: Multi-Agent System Integration with Memory
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { NextResponse } from "next/server";
@@ -9,14 +9,59 @@ import { processInventoryQuery } from "@/lib/agents/inventoryAgent";
 import { processPurchasingQuery } from "@/lib/agents/purchasingAgent";
 import { processHrQuery } from "@/lib/agents/hrAgent";
 import { processCrmQuery } from "@/lib/agents/crmAgent";
+import { MemoryService } from "@/lib/services/memoryService";
+import { Entity } from "@/lib/types/memory";
+
+/**
+ * Extract entities from agent response data and store in memory
+ */
+function extractEntitiesFromResponse(agentResponse: any, agentKey: string, sessionId: string) {
+    if (!agentResponse.data || !Array.isArray(agentResponse.data)) return;
+
+    const typeMap: Record<string, Entity['type']> = {
+        'res.partner': 'customer',
+        'product.product': 'product',
+        'sale.order': 'order',
+        'account.move': 'invoice',
+        'hr.employee': 'employee',
+        'crm.lead': 'opportunity',
+        'purchase.order': 'order'
+    };
+
+    // Infer table name from agent key or data
+    let tableName = '';
+    if (agentKey === 'sales') tableName = agentResponse.data[0]?.partner_id ? 'res.partner' : 'sale.order';
+    if (agentKey === 'finance') tableName = 'account.move';
+    if (agentKey === 'inventory') tableName = 'product.product';
+    if (agentKey === 'purchasing') tableName = 'purchase.order';
+    if (agentKey === 'hr') tableName = 'hr.employee';
+    if (agentKey === 'crm') tableName = 'crm.lead';
+
+    const entityType = typeMap[tableName];
+    if (!entityType) return;
+
+    // Extract and store entities
+    agentResponse.data.slice(0, 20).forEach((record: any) => {
+        const entity: Entity = {
+            id: `${entityType}-${record.id}`,
+            type: entityType,
+            name: record.name || record.partner_id?.[1] || `${entityType} ${record.id}`,
+            odooId: record.id,
+            metadata: record,
+            mentionedAt: new Date()
+        };
+        MemoryService.addEntity(sessionId, entity);
+    });
+}
 
 export async function POST(req: Request) {
     try {
-        const { message, history, userContext } = await req.json();
+        const { message, history, userContext, sessionId } = await req.json();
 
         const username = userContext?.username || 'Kullanıcı';
+        const activeSessionId = sessionId || 'default';
 
-        console.log(`\n🎯 [ORCHESTRATOR] New query from ${username}: "${message}"`);
+        console.log(`\n🎯 [ORCHESTRATOR] New query from ${username}: "${message}" (session: ${activeSessionId})`);
 
         const lower = message.toLowerCase();
 
@@ -62,46 +107,72 @@ export async function POST(req: Request) {
 
         console.log(`🧩 [ORCHESTRATOR] Executing agents:`, uniqueAgents);
 
-        const agentResults = await Promise.all(
+        // Build memory context from previous entities
+        const memoryContext = MemoryService.buildContextPrompt(activeSessionId);
+        const messageWithContext = message + memoryContext;
+
+        // Use Promise.allSettled for graceful degradation (partial success support)
+        const settledResults = await Promise.allSettled(
             uniqueAgents.map(async (agentKey) => {
                 const key = agentKey.toLowerCase();
                 // ... (rest of the mapping code stays same)
                 if (key === 'finance') {
                     const name = '💰 Finance Agent';
                     console.log(`💰 [FINANCE AGENT] Processing query...`);
-                    const res = await processFinanceQuery(message, history);
+                    const res = await processFinanceQuery(messageWithContext, history);
                     return { key, name, ...res };
                 }
                 if (key === 'inventory') {
                     const name = '📦 Inventory Agent';
                     console.log(`📦 [INVENTORY AGENT] Processing query...`);
-                    const res = await processInventoryQuery(message, history);
+                    const res = await processInventoryQuery(messageWithContext, history);
                     return { key, name, ...res };
                 }
                 if (key === 'purchasing' || key === 'purchase') {
                     const name = '🧾 Purchasing Agent';
                     console.log(`🧾 [PURCHASING AGENT] Processing query...`);
-                    const res = await processPurchasingQuery(message, history);
+                    const res = await processPurchasingQuery(messageWithContext, history);
                     return { key, name, ...res };
                 }
                 if (key === 'hr' || key === 'human_resources') {
                     const name = '👥 HR Agent';
                     console.log(`👥 [HR AGENT] Processing query...`);
-                    const res = await processHrQuery(message, history);
+                    const res = await processHrQuery(messageWithContext, history);
                     return { key, name, ...res };
                 }
                 if (key === 'crm') {
                     const name = '📈 CRM Agent';
                     console.log(`📈 [CRM AGENT] Processing query...`);
-                    const res = await processCrmQuery(message, history);
+                    const res = await processCrmQuery(messageWithContext, history);
                     return { key, name, ...res };
                 }
                 const name = '💼 Sales Agent';
                 console.log(`💼 [SALES AGENT] Processing query...`);
-                const res = await processSalesQuery(message, history);
+                const res = await processSalesQuery(messageWithContext, history);
                 return { key, name, ...res };
             })
         );
+
+        // Extract successful results and log failures
+        const agentResults: any[] = [];
+        settledResults.forEach((result, idx) => {
+            if (result.status === 'fulfilled') {
+                agentResults.push(result.value);
+                // Extract entities from successful agent responses
+                extractEntitiesFromResponse(result.value, result.value.key, activeSessionId);
+            } else {
+                console.error(`❌ [ORCHESTRATOR] Agent ${uniqueAgents[idx]} failed:`, result.reason);
+                // Add partial failure indicator
+                agentResults.push({
+                    key: uniqueAgents[idx],
+                    name: `⚠️ ${uniqueAgents[idx].toUpperCase()} Agent`,
+                    content: `Bu agent geçici olarak yanıt veremedi. Diğer departmanlardan gelen verileri inceleyebilirsiniz.`,
+                    data: null,
+                    ui_component: null,
+                    agentError: true
+                });
+            }
+        });
 
         // Step 3: Merge responses into a unified message
         const multiAgent = uniqueAgents.length > 1;

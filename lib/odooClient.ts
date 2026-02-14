@@ -1,4 +1,5 @@
 import xmlrpc from 'xmlrpc';
+import { withTimeout } from '@/lib/utils/errorHandling';
 
 const ODOO_URL = process.env.ODOO_URL;
 const ODOO_DB = process.env.ODOO_DB;
@@ -40,29 +41,33 @@ export const searchReadOdoo = async (model: string, query: any[] = [], fields: s
         const uid = await authenticate();
         const client = getClient('/xmlrpc/2/object');
 
-        return new Promise((resolve, reject) => {
-            const options: any = {
-                fields: fields.length > 0 ? fields : undefined,
-                limit: limit
-            };
-            if (order) options.order = order;
+        return withTimeout(
+            () => new Promise((resolve, reject) => {
+                const options: any = {
+                    fields: fields.length > 0 ? fields : undefined,
+                    limit: limit
+                };
+                if (order) options.order = order;
 
-            client.methodCall('execute_kw', [
-                ODOO_DB,
-                uid,
-                ODOO_PASSWORD,
-                model,
-                'search_read',
-                [query],
-                options
-            ], (error, value) => {
-                if (error) {
-                    reject(error);
-                } else {
-                    resolve(value);
-                }
-            });
-        });
+                client.methodCall('execute_kw', [
+                    ODOO_DB,
+                    uid,
+                    ODOO_PASSWORD,
+                    model,
+                    'search_read',
+                    [query],
+                    options
+                ], (error, value) => {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        resolve(value);
+                    }
+                });
+            }),
+            10000, // 10 second timeout
+            'Odoo search_read operation timed out'
+        );
     } catch (error) {
         console.error("Odoo Error:", error);
         throw error;
@@ -75,22 +80,26 @@ export const countOdoo = async (model: string, query: any[] = []): Promise<numbe
         const uid = await authenticate();
         const client = getClient('/xmlrpc/2/object');
 
-        return new Promise((resolve, reject) => {
-            client.methodCall('execute_kw', [
-                ODOO_DB,
-                uid,
-                ODOO_PASSWORD,
-                model,
-                'search_count',
-                [query]
-            ], (error, value) => {
-                if (error) {
-                    reject(error);
-                } else {
-                    resolve(value as number);
-                }
-            });
-        });
+        return withTimeout(
+            () => new Promise<number>((resolve, reject) => {
+                client.methodCall('execute_kw', [
+                    ODOO_DB,
+                    uid,
+                    ODOO_PASSWORD,
+                    model,
+                    'search_count',
+                    [query]
+                ], (error, value) => {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        resolve(value as number);
+                    }
+                });
+            }),
+            10000, // 10 second timeout
+            'Odoo search_count operation timed out'
+        );
     } catch (error) {
         console.error("Odoo Error:", error);
         throw error;
