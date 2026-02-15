@@ -9,6 +9,7 @@ import { processInventoryQuery } from "@/lib/agents/inventoryAgent";
 import { processPurchasingQuery } from "@/lib/agents/purchasingAgent";
 import { processHrQuery } from "@/lib/agents/hrAgent";
 import { processCrmQuery } from "@/lib/agents/crmAgent";
+import { processAnalyticsQuery } from "@/lib/agents/analyticsAgent";
 import { MemoryService } from "@/lib/services/memoryService";
 import { Entity } from "@/lib/types/memory";
 
@@ -82,7 +83,18 @@ export async function POST(req: Request) {
             forcedAgents = ["crm"];
         } else if (lower.includes("şirket özetini çıkar") || lower.includes("şirket özeti")) {
             // Executive summary: çoklu ajan
-            forcedAgents = ["sales", "finance", "inventory", "purchasing", "crm"];
+            forcedAgents = ["sales", "finance", "inventory", "purchasing", "crm", "analytics"];
+        } else if (
+            lower.includes("tahmin") || lower.includes("forecast") || lower.includes("prophet") ||
+            lower.includes("anomali") || lower.includes("anormallik") || lower.includes("sapma") ||
+            lower.includes("segment") || lower.includes("rfm") || lower.includes("kümeleme") ||
+            lower.includes("k-means") || lower.includes("isolation forest") ||
+            lower.includes("gelir trendi") || lower.includes("trend") ||
+            lower.includes("kpi") || lower.includes("ml ") || lower.includes("makine öğrenmesi") ||
+            lower.includes("yapay zeka raporu") || lower.includes("ai rapor") ||
+            lower.includes("günlük rapor") || lower.includes("analitik") || lower.includes("erpo")
+        ) {
+            forcedAgents = ["analytics"];
         }
 
         // Step 1: Orchestrator decides which agent(s) to use (veya rule-based override)
@@ -144,6 +156,12 @@ export async function POST(req: Request) {
                     const name = '📈 CRM Agent';
                     console.log(`📈 [CRM AGENT] Processing query...`);
                     const res = await processCrmQuery(messageWithContext, history);
+                    return { key, name, ...res };
+                }
+                if (key === 'analytics') {
+                    const name = '🔬 Analytics Agent';
+                    console.log(`🔬 [ANALYTICS AGENT] Processing query...`);
+                    const res = await processAnalyticsQuery(messageWithContext, history);
                     return { key, name, ...res };
                 }
                 const name = '💼 Sales Agent';

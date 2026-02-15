@@ -9,7 +9,7 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 export interface AgentRoute {
-    agents: ('sales' | 'finance' | 'inventory' | 'purchasing' | 'hr' | 'crm')[];
+    agents: ('sales' | 'finance' | 'inventory' | 'purchasing' | 'hr' | 'crm' | 'analytics')[];
     confidence: number;
     reasoning: string;
     analysis: string; // Brain analysis as shown in the visual
@@ -27,6 +27,7 @@ export async function routeToAgent(userQuery: string, history: any[]): Promise<A
     4. **Finance Agent**: Faturalar (Invoices), Ödemeler (Payments), Finansal Durum, Borç/Alacak, Mali Tablolar.
     5. **Purchasing Agent**: Satın Alma Siparişleri (PO), Tedarikçiler, Bekleyen Alımlar, Satın Alma İşlemleri.
     6. **Sales Agent**: Satış Siparişleri (Orders), Müşteri Verileri, Gelir Analizi, Teklifler, Taslak Siparişler, Müşteri Listesi.
+    7. **Analytics Agent**: ML Tahminleri (Prophet satış tahmini), Anomali Tespiti (Isolation Forest), Müşteri Segmentasyonu (K-Means RFM), KPI Özeti, Gelir Trendi, AI Raporları, Yapay Zeka Analizi.
 
     YÖNLENDİRME STRATEJİSİ:
     - **Tekil Sorumluluk**: Eğer soru net bir departmanı ilgilendiriyorsa (örn: "Bu ayki faturalar"), sadece ilgili ajanı seç.
@@ -40,6 +41,13 @@ export async function routeToAgent(userQuery: string, history: any[]): Promise<A
     - "satın alma" veya "tedarikçi" → Purchasing Agent
     - "çalışan" veya "personel" veya "izin" → HR Agent
     - "fırsat" veya "lead" veya "crm" → CRM Agent
+    - "tahmin" veya "forecast" veya "prophet" veya "satış tahmini" → Analytics Agent
+    - "anomali" veya "anormallik" veya "sapma" veya "isolation forest" → Analytics Agent
+    - "segment" veya "rfm" veya "müşteri grubu" veya "k-means" veya "kümeleme" → Analytics Agent
+    - "trend" veya "gelir trendi" veya "aylık gelir" → Analytics Agent
+    - "kpi" veya "metrik" veya "genel performans" → Analytics Agent
+    - "ml" veya "makine öğrenmesi" veya "yapay zeka raporu" veya "ai rapor" → Analytics Agent
+    - "analiz" veya "analitik" veya "veri analizi" veya "erpo" → Analytics Agent
 
     KURAL:
     - SADECE JSON formatında yanıt ver.

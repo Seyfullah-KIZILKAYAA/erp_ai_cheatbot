@@ -2,7 +2,17 @@
 
 /**
  * INVENTORY AGENT
- * Specialized in stock levels, products, warehouses and supply status
+ * Specialized in stock levels, products, warehouses, and supply status.
+ * Connects to Odoo ERP via XML-RPC for real-time data.
+ *
+ * Intent-based architecture:
+ * - product_list: Ürün listesi
+ * - product_summary: Ürün/stok özeti (toplam ürün, kritik stok, ortalama stok vb.)
+ * - critical_stock: Kritik seviyedeki ürünler (qty_available < 10)
+ * - stock_search: Ürün arama (ilike)
+ * - stock_movement: Stok hareketleri (stock.move)
+ * - stock_value: Stok değeri analizi (toplam stok * fiyat)
+ * - stock_chart: Stok durumu bar chart
  */
 
 import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
@@ -11,57 +21,80 @@ import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
+type InventoryIntent =
+    | "product_list"
+    | "product_summary"
+    | "critical_stock"
+    | "stock_search"
+    | "stock_movement"
+    | "stock_value"
+    | "stock_chart";
+
+const PRODUCT_FIELDS = ["id", "name", "qty_available", "list_price", "default_code"];
+const QUANT_FIELDS = ["id", "product_id", "location_id", "quantity", "reserved_quantity"];
+const MOVE_FIELDS = ["id", "product_id", "date", "quantity", "state", "location_id", "location_dest_id"];
+
+const MOVE_STATE_LABELS: Record<string, string> = {
+    draft: "Taslak",
+    waiting: "Bekliyor",
+    confirmed: "Onaylandı",
+    partially_available: "Kısmen Hazır",
+    assigned: "Hazır",
+    done: "Tamamlandı",
+    cancel: "İptal"
+};
+
+const CRITICAL_THRESHOLD = 10;
+
 export async function processInventoryQuery(userQuery: string, history: any[]) {
     const lower = userQuery.toLowerCase();
 
-    // Hard-coded intent: list all products (used by dashboard card)
-    if (lower.includes("tüm ürünleri listele")) {
-        const action = {
-            type: "query",
-            table: "product.product",
-            filters: [],
-            fields: ["id", "name", "qty_available", "list_price", "default_code"],
-            limit: 100,
-            order: "name ASC",
-            display: "table"
-        };
-        return executeInventoryOdooAction(JSON.stringify(action), userQuery);
+    // --- Hard-coded intents for common queries ---
+    if (lower.includes("tüm ürünleri listele") || lower.includes("ürün listesi")) {
+        return executeInventoryAction("product_list", userQuery);
+    }
+    if (lower.includes("kritik stok") || lower.includes("düşük stok") || lower.includes("stok uyarı") || lower.includes("stok alarm")) {
+        return executeInventoryAction("critical_stock", userQuery);
+    }
+    if (lower.includes("stok özet") || lower.includes("envanter özet") || lower.includes("stok rapor") || lower.includes("ürün özet")) {
+        return executeInventoryAction("product_summary", userQuery);
+    }
+    if (lower.includes("stok hareket") || lower.includes("giriş çıkış") || lower.includes("stok transfer")) {
+        return executeInventoryAction("stock_movement", userQuery);
+    }
+    if (lower.includes("stok değer") || lower.includes("envanter değer") || lower.includes("stok maliyet")) {
+        return executeInventoryAction("stock_value", userQuery);
+    }
+    if (lower.includes("stok grafik") || lower.includes("stok chart") || lower.includes("stok dağılım")) {
+        return executeInventoryAction("stock_chart", userQuery);
+    }
+    if (lower.includes("ürün ara") || lower.includes("ürün bul") || lower.includes("stok ara")) {
+        return executeInventoryAction("stock_search", userQuery);
     }
 
+    // --- LLM-based intent detection for ambiguous queries ---
     const systemPrompt = `
-    Sen bir **Stok ve Depo Yönetimi AI Uzmanısın**. Odoo ERP'de ürün stok seviyeleri, depo hareketleri ve envanter analizi yapıyorsun.
-    Görsel mimarideki **Inventory Agent** rolündesin.
+    Sen bir **Stok ve Depo Yönetimi AI Uzmanısın**. Odoo ERP sisteminde ürün stok seviyeleri, depo hareketleri ve envanter analizi yapıyorsun.
 
-    SORUMLULUKLARIN:
-    - Kritik stok seviyelerini belirlemek.
-    - Stok hareketlerini (stock.move) analiz etmek.
-    - Ürün bazlı stok durumu raporlamak.
+    MEVCUT ANALİZ TÜRLERİ:
+    1. "product_list" → Tüm ürünleri listele
+    2. "product_summary" → Stok/ürün özeti ve istatistikleri (toplam ürün, kritik stok sayısı, ortalama stok vb.)
+    3. "critical_stock" → Kritik seviyedeki ürünler (qty_available < ${CRITICAL_THRESHOLD})
+    4. "stock_search" → Belirli bir ürünü ara (search_term kullan)
+    5. "stock_movement" → Stok hareketleri (giriş/çıkış/transfer)
+    6. "stock_value" → Stok değeri analizi (stok miktarı * birim fiyat)
+    7. "stock_chart" → Stok durumu grafiği
 
     KURALLAR:
-    - SADECE GEÇERLİ JSON formatında yanıt ver. Hiçbir ek metin ekleme.
-    - **Sayısal Veri**: ASLA markdown kullanma. Saf sayı kullan.
-    - **Özet Talebi**: Eğer özet istenirse, stoktaki kritik ürünleri listele. Veri yoksa "Kritik seviyede ürün bulunmuyor" bilgisi ver.
-    - **Limit**: Varsayılan limit 50 olsun, ancak kullanıcı "tüm" derse limit'i 500'e çıkar.
-    - **Kritik Stok**: qty_available < 10 olan ürünler kritik kabul edilir.
+    - SADECE GEÇERLİ JSON formatında yanıt ver.
+    - Eğer ürün aranıyorsa, "search_term" alanına arama terimini ekle.
+    - Bugün: ${new Date().toISOString().split('T')[0]}
 
-    GEÇERLİ ALANLAR (product.product için):
-    - id, name, qty_available, list_price, default_code
-
-    GEÇERLİ ALANLAR (stock.quant için):
-    - id, product_id, location_id, quantity, reserved_quantity
-
-    GEÇERLİ ALANLAR (stock.move için):
-    - id, product_id, date, quantity, state, location_id, location_dest_id
-
-    ÇIKTI FORMATI (ZORUNLU):
+    ÇIKTI FORMATI:
     {
-        "type": "query",
-        "table": "product.product",
-        "filters": [{"column": "qty_available", "operator": "lt", "value": 10}],
-        "fields": ["name", "qty_available", "list_price", "default_code"],
-        "limit": 50,
-        "order": "qty_available ASC",
-        "display": "table"
+        "intent": "product_list",
+        "search_term": null,
+        "reasoning": "Kullanıcı ürün listesini görmek istiyor."
     }
     `;
 
@@ -85,165 +118,363 @@ export async function processInventoryQuery(userQuery: string, history: any[]) {
                             { role: "user", content: userQuery }
                         ],
                         temperature: 0.1,
-                        max_tokens: 800,
+                        max_tokens: 400,
                         response_format: { type: "json_object" }
                     })
                 }),
-                12000, // 12 second timeout
+                12000,
                 'Inventory Agent LLM request timed out'
             ),
             { maxRetries: 2, baseDelay: 1000 }
         );
 
         if (!response.ok) {
-            return { content: "Stok AI yanıt vermedi.", data: null, ui_component: null };
+            return { content: "Stok AI servisinden yanıt alınamadı.", data: null, ui_component: null };
         }
 
         const data = await response.json();
         const rawContent = data.choices[0]?.message?.content || "{}";
 
-        return await executeInventoryOdooAction(rawContent, userQuery);
+        let parsed: any;
+        try {
+            parsed = JSON.parse(rawContent);
+        } catch {
+            const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+            if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+            else parsed = { intent: "product_list" };
+        }
+
+        return executeInventoryAction(parsed.intent || "product_list", userQuery, parsed.search_term);
 
     } catch (error: any) {
         console.error("Inventory Agent Error:", error);
-        return { content: "Stok verileri alınamadı.", data: null, ui_component: null };
+        return executeInventoryAction("product_summary", userQuery);
     }
 }
 
-async function executeInventoryOdooAction(rawContent: string, userQuery: string) {
+async function executeInventoryAction(intent: InventoryIntent, userQuery: string, searchTerm?: string) {
     try {
-        let action: any;
-        try {
-            action = JSON.parse(rawContent);
-        } catch (e) {
-            const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-            if (jsonMatch) action = JSON.parse(jsonMatch[0]);
-            else throw new Error("No JSON");
-        }
+        switch (intent) {
+            // ─── Product List ───────────────────────────────────────────
+            case "product_list": {
+                const data = await searchReadOdoo(
+                    "product.product", [], PRODUCT_FIELDS, 100, "name ASC"
+                );
+                if (!data?.length) {
+                    return { content: "Sistemde ürün kaydı bulunamadı.", data: null, ui_component: null };
+                }
 
-        // --- Normalize / Fallbacks ---
-        if (!action.type) {
-            action.type = "query";
-        }
+                const tableData = data.map((r: any, i: number) => ({
+                    sira: i + 1,
+                    kod: r.default_code || '-',
+                    urun: r.name,
+                    stok: Number(r.qty_available ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    fiyat: Number(r.list_price ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺'
+                }));
 
-        if (!action.table) {
-            const lower = userQuery.toLowerCase();
-            if (lower.includes("hareket")) {
-                action.table = "stock.move";
-            } else {
-                action.table = "product.product";
+                const totalQty = data.reduce((s: number, r: any) => s + Number(r.qty_available ?? 0), 0);
+                const criticalCount = data.filter((r: any) => Number(r.qty_available ?? 0) < CRITICAL_THRESHOLD).length;
+
+                return {
+                    content:
+                        `## 📦 Ürün Listesi\n\n` +
+                        `Toplam **${data.length}** ürün listelendi.\n` +
+                        `Toplam stok miktarı: **${totalQty.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet\n` +
+                        `Kritik stok seviyesinde (< ${CRITICAL_THRESHOLD}): **${criticalCount}** ürün`,
+                    data: tableData,
+                    ui_component: 'table'
+                };
             }
-        }
 
-        const allowedTables = ["product.product", "stock.quant", "stock.move"];
-        if (!allowedTables.includes(action.table)) {
-            const lower = userQuery.toLowerCase();
-            if (lower.includes("hareket")) {
-                action.table = "stock.move";
-            } else {
-                action.table = "product.product";
+            // ─── Product / Stock Summary ────────────────────────────────
+            case "product_summary": {
+                const allProducts = await searchReadOdoo(
+                    "product.product", [], ["id", "qty_available", "list_price"], 500, ""
+                );
+
+                const totalProducts = allProducts?.length || 0;
+                if (!totalProducts) {
+                    return { content: "Sistemde ürün kaydı bulunamadı.", data: null, ui_component: null };
+                }
+
+                const quantities = allProducts.map((r: any) => Number(r.qty_available ?? 0));
+                const totalQty = quantities.reduce((a: number, b: number) => a + b, 0);
+                const avgQty = totalQty / totalProducts;
+                const maxQty = Math.max(...quantities);
+                const minQty = Math.min(...quantities);
+                const criticalCount = quantities.filter((q: number) => q < CRITICAL_THRESHOLD).length;
+                const zeroStockCount = quantities.filter((q: number) => q <= 0).length;
+
+                const totalValue = allProducts.reduce((s: number, r: any) => {
+                    return s + (Number(r.qty_available ?? 0) * Number(r.list_price ?? 0));
+                }, 0);
+
+                const [totalMoves, doneMoves] = await Promise.all([
+                    countOdoo("stock.move", []),
+                    countOdoo("stock.move", [["state", "=", "done"]])
+                ]);
+
+                return {
+                    content:
+                        `## 📊 Stok & Envanter Özeti\n\n` +
+                        `| Metrik | Değer |\n|--------|-------|\n` +
+                        `| Toplam Ürün | **${totalProducts}** |\n` +
+                        `| Toplam Stok Miktarı | **${totalQty.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet |\n` +
+                        `| Ortalama Stok / Ürün | **${avgQty.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet |\n` +
+                        `| En Yüksek Stok | **${maxQty.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet |\n` +
+                        `| En Düşük Stok | **${minQty.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet |\n` +
+                        `| Kritik Stok (< ${CRITICAL_THRESHOLD}) | **${criticalCount}** ürün |\n` +
+                        `| Stokta Olmayan (≤ 0) | **${zeroStockCount}** ürün |\n` +
+                        `| Tahmini Stok Değeri | **${totalValue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
+                        `| Toplam Stok Hareketi | **${totalMoves}** |\n` +
+                        `| Tamamlanan Hareket | **${doneMoves}** |\n\n` +
+                        `Sağlık oranı: **%${totalProducts ? (((totalProducts - criticalCount) / totalProducts) * 100).toFixed(1) : 0}** ürün yeterli stokta`,
+                    data: { totalProducts, totalQty, avgQty, criticalCount, zeroStockCount, totalValue, totalMoves, doneMoves },
+                    ui_component: 'stat'
+                };
             }
-        }
 
-        const buildOdooDomain = (filters: any[]) => {
-            if (!filters) return [];
+            // ─── Critical Stock ─────────────────────────────────────────
+            case "critical_stock": {
+                const data = await searchReadOdoo(
+                    "product.product",
+                    [["qty_available", "<", CRITICAL_THRESHOLD]],
+                    PRODUCT_FIELDS, 100, "qty_available ASC"
+                );
+                if (!data?.length) {
+                    return {
+                        content:
+                            `## ✅ Kritik Stok Durumu\n\n` +
+                            `Tebrikler! Stok seviyesi **${CRITICAL_THRESHOLD}** adetten düşük ürün bulunmuyor.`,
+                        data: null,
+                        ui_component: null
+                    };
+                }
 
-            const baseFieldsByTable: Record<string, string[]> = {
-                "product.product": ["id", "name", "qty_available", "list_price", "default_code"],
-                "stock.quant": ["id", "product_id", "location_id", "quantity", "reserved_quantity"],
-                "stock.move": ["id", "product_id", "date", "quantity", "state", "location_id", "location_dest_id"]
-            };
-            const allowedColumns = baseFieldsByTable[action.table] || [];
-
-            return filters
-                .filter((f: any) => f && typeof f.column === "string" && f.column.trim() && allowedColumns.includes(f.column))
-                .map((f: any) => {
-                    if (f.operator === 'ilike') return [f.column, 'ilike', f.value];
-                    if (f.operator === 'eq') return [f.column, '=', f.value];
-                    if (f.operator === 'gt') return [f.column, '>', f.value];
-                    if (f.operator === 'lt') return [f.column, '<', f.value];
-                    if (f.operator === 'gte') return [f.column, '>=', f.value];
-                    if (f.operator === 'lte') return [f.column, '<=', f.value];
-                    return [f.column, '=', f.value];
+                const zeroStock = data.filter((r: any) => Number(r.qty_available ?? 0) <= 0);
+                const lowStock = data.filter((r: any) => {
+                    const qty = Number(r.qty_available ?? 0);
+                    return qty > 0 && qty < CRITICAL_THRESHOLD;
                 });
-        };
 
-        if (action.type === 'count') {
-            const domain = buildOdooDomain(action.filters);
-            const count = await countOdoo(action.table, domain);
-            return {
-                content: `**Stok Departmanı Raporu:** Toplam **${count}** kayıt bulundu.`,
-                data: { count },
-                ui_component: 'stat'
-            };
-        }
+                const tableData = data.map((r: any, i: number) => ({
+                    sira: i + 1,
+                    kod: r.default_code || '-',
+                    urun: r.name,
+                    stok: Number(r.qty_available ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    fiyat: Number(r.list_price ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺',
+                    durum: Number(r.qty_available ?? 0) <= 0 ? '🔴 Tükendi' : '🟡 Düşük'
+                }));
 
-        const domain = buildOdooDomain(action.filters);
-
-        const baseFieldsByTable: Record<string, string[]> = {
-            "product.product": ["id", "name", "qty_available", "list_price", "default_code"],
-            "stock.quant": ["id", "product_id", "location_id", "quantity", "reserved_quantity"],
-            "stock.move": ["id", "product_id", "date", "quantity", "state", "location_id", "location_dest_id"]
-        };
-
-        const requestedFields: string[] = Array.isArray(action.fields) ? action.fields : [];
-        const allowedFields = baseFieldsByTable[action.table] || [];
-
-        let fields: string[];
-        if (requestedFields.length > 0) {
-            fields = requestedFields.filter(f => allowedFields.includes(f));
-            if (fields.length === 0) {
-                fields = allowedFields;
+                return {
+                    content:
+                        `## ⚠️ Kritik Stok Uyarısı\n\n` +
+                        `Stok seviyesi **${CRITICAL_THRESHOLD}** adetten düşük **${data.length}** ürün tespit edildi.\n\n` +
+                        `| Durum | Adet |\n|-------|------|\n` +
+                        `| 🔴 Stokta Yok (≤ 0) | **${zeroStock.length}** |\n` +
+                        `| 🟡 Düşük Stok (1-${CRITICAL_THRESHOLD - 1}) | **${lowStock.length}** |\n\n` +
+                        `Bu ürünler için acil tedarik planlaması önerilir.`,
+                    data: tableData,
+                    ui_component: 'table'
+                };
             }
-        } else {
-            fields = allowedFields;
+
+            // ─── Stock Search ───────────────────────────────────────────
+            case "stock_search": {
+                const term = searchTerm || userQuery.replace(/ürün ara|ürün bul|stok ara/gi, '').trim();
+                if (!term) {
+                    return { content: "Lütfen aramak istediğiniz ürün adını belirtin.", data: null, ui_component: null };
+                }
+
+                const data = await searchReadOdoo(
+                    "product.product",
+                    [["name", "ilike", term]],
+                    PRODUCT_FIELDS, 50, "name ASC"
+                );
+                if (!data?.length) {
+                    return {
+                        content: `## 🔍 Ürün Arama: "${term}"\n\nBu arama ile eşleşen ürün bulunamadı.`,
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const tableData = data.map((r: any, i: number) => ({
+                    sira: i + 1,
+                    kod: r.default_code || '-',
+                    urun: r.name,
+                    stok: Number(r.qty_available ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    fiyat: Number(r.list_price ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺'
+                }));
+
+                return {
+                    content: `## 🔍 Ürün Arama: "${term}"\n\n**${data.length}** sonuç bulundu.`,
+                    data: tableData,
+                    ui_component: 'table'
+                };
+            }
+
+            // ─── Stock Movement ─────────────────────────────────────────
+            case "stock_movement": {
+                const data = await searchReadOdoo(
+                    "stock.move", [], MOVE_FIELDS, 50, "date DESC"
+                );
+                if (!data?.length) {
+                    return { content: "Sistemde stok hareketi bulunamadı.", data: null, ui_component: null };
+                }
+
+                const tableData = data.map((r: any, i: number) => ({
+                    sira: i + 1,
+                    urun: Array.isArray(r.product_id) ? r.product_id[1] : r.product_id,
+                    miktar: Number(r.quantity ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    kaynak: Array.isArray(r.location_id) ? r.location_id[1] : r.location_id,
+                    hedef: Array.isArray(r.location_dest_id) ? r.location_dest_id[1] : r.location_dest_id,
+                    durum: MOVE_STATE_LABELS[r.state] || r.state,
+                    tarih: r.date
+                }));
+
+                // State distribution
+                const stateCounts: Record<string, number> = {};
+                data.forEach((r: any) => {
+                    const label = MOVE_STATE_LABELS[r.state] || r.state;
+                    stateCounts[label] = (stateCounts[label] || 0) + 1;
+                });
+
+                const statusLines = Object.entries(stateCounts)
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([label, count]) => `- **${label}**: ${count} hareket`)
+                    .join('\n');
+
+                return {
+                    content:
+                        `## 🔄 Stok Hareketleri\n\n` +
+                        `Son **${data.length}** stok hareketi listelendi.\n\n` +
+                        `**Durum Dağılımı:**\n${statusLines}`,
+                    data: tableData,
+                    ui_component: 'table'
+                };
+            }
+
+            // ─── Stock Value Analysis ───────────────────────────────────
+            case "stock_value": {
+                const data = await searchReadOdoo(
+                    "product.product", [], PRODUCT_FIELDS, 500, "qty_available DESC"
+                );
+                if (!data?.length) {
+                    return { content: "Stok değeri hesaplanamadı: ürün bulunamadı.", data: null, ui_component: null };
+                }
+
+                const enriched = data
+                    .map((r: any) => {
+                        const qty = Number(r.qty_available ?? 0);
+                        const price = Number(r.list_price ?? 0);
+                        return {
+                            name: r.name,
+                            default_code: r.default_code || '-',
+                            qty_available: qty,
+                            list_price: price,
+                            value: qty * price
+                        };
+                    })
+                    .filter((r: any) => r.value > 0)
+                    .sort((a: any, b: any) => b.value - a.value);
+
+                if (!enriched.length) {
+                    return {
+                        content: "Stok değeri sıfırdan büyük ürün bulunamadı.",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const totalValue = enriched.reduce((s: number, r: any) => s + r.value, 0);
+                const top10 = enriched.slice(0, 10);
+
+                const tableData = enriched.slice(0, 50).map((r: any, i: number) => ({
+                    sira: i + 1,
+                    kod: r.default_code,
+                    urun: r.name,
+                    stok: r.qty_available.toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    birim_fiyat: r.list_price.toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺',
+                    toplam_deger: r.value.toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺'
+                }));
+
+                const top3Lines = top10.slice(0, 3).map((r: any, i: number) =>
+                    `${i + 1}. **${r.name}** — ${r.value.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺`
+                ).join('\n');
+
+                return {
+                    content:
+                        `## 💰 Stok Değeri Analizi\n\n` +
+                        `| Metrik | Değer |\n|--------|-------|\n` +
+                        `| Değeri > 0 Olan Ürün | **${enriched.length}** |\n` +
+                        `| Toplam Stok Değeri | **${totalValue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
+                        `| Ort. Ürün Değeri | **${(totalValue / enriched.length).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n\n` +
+                        `**En Değerli 3 Ürün:**\n${top3Lines}`,
+                    data: tableData,
+                    ui_component: 'table'
+                };
+            }
+
+            // ─── Stock Chart ────────────────────────────────────────────
+            case "stock_chart": {
+                const data = await searchReadOdoo(
+                    "product.product", [], PRODUCT_FIELDS, 500, "qty_available DESC"
+                );
+                if (!data?.length) {
+                    return { content: "Stok grafiği için yeterli veri bulunamadı.", data: null, ui_component: null };
+                }
+
+                // Top 15 products by stock quantity for the chart
+                const chartData = data
+                    .slice(0, 15)
+                    .map((r: any) => ({
+                        name: r.name.length > 25 ? r.name.substring(0, 25) + '...' : r.name,
+                        stok_miktari: Number(r.qty_available ?? 0)
+                    }))
+                    .filter((r: any) => r.stok_miktari > 0);
+
+                if (!chartData.length) {
+                    return { content: "Stokta bulunan ürün yok, grafik oluşturulamadı.", data: null, ui_component: null };
+                }
+
+                // Stock distribution buckets
+                const quantities = data.map((r: any) => Number(r.qty_available ?? 0));
+                const totalProducts = quantities.length;
+                const zeroStock = quantities.filter((q: number) => q <= 0).length;
+                const lowStock = quantities.filter((q: number) => q > 0 && q < CRITICAL_THRESHOLD).length;
+                const normalStock = quantities.filter((q: number) => q >= CRITICAL_THRESHOLD && q < 100).length;
+                const highStock = quantities.filter((q: number) => q >= 100).length;
+
+                return {
+                    content:
+                        `## 📈 Stok Durumu Grafiği\n\n` +
+                        `En yüksek stoklu **${chartData.length}** ürün grafikte gösterilmektedir.\n\n` +
+                        `**Stok Dağılım Özeti** (${totalProducts} ürün):\n` +
+                        `- 🔴 Stokta yok (≤ 0): **${zeroStock}** ürün\n` +
+                        `- 🟡 Düşük stok (1-${CRITICAL_THRESHOLD - 1}): **${lowStock}** ürün\n` +
+                        `- 🟢 Normal stok (${CRITICAL_THRESHOLD}-99): **${normalStock}** ürün\n` +
+                        `- 🔵 Yüksek stok (100+): **${highStock}** ürün`,
+                    data: chartData,
+                    ui_component: 'chart'
+                };
+            }
+
+            default:
+                return executeInventoryAction("product_list", userQuery);
         }
 
-        const data = await searchReadOdoo(
-            action.table,
-            domain,
-            fields,
-            action.limit || 50,
-            action.order || ''
-        );
+    } catch (error: any) {
+        console.error("Inventory Action Error:", error);
 
-        if (!data || data.length === 0) {
+        if (error.message?.includes("ECONNREFUSED")) {
             return {
-                content: "Bu kriterlere uygun stok verisi bulunamadı.",
+                content: "⚠️ Odoo ERP sistemine bağlanılamıyor. Lütfen Odoo servisinin (localhost:8069) çalıştığından emin olun.",
                 data: null,
                 ui_component: null
             };
         }
 
-        // Deterministic inventory summary
-        let content: string;
-        if (action.table === "product.product") {
-            const qtys = data
-                .map((r: any) => Number(r.qty_available ?? 0))
-                .filter((v: number) => !isNaN(v));
-            const total = qtys.reduce((a: number, b: number) => a + b, 0);
-            const count = qtys.length;
-            const criticalCount = data.filter((r: any) => Number(r.qty_available ?? 0) <= 0).length;
-            const avg = count ? total / count : 0;
-
-            content =
-                `Toplam **${count}** ürün için stok bilgisi bulundu. ` +
-                `Ürün başına ortalama stok miktarı yaklaşık **${avg.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet. ` +
-                `Stok seviyesi **0 veya altında** olan kritik ürün sayısı **${criticalCount}** olarak görünüyor.`;
-        } else {
-            content =
-                `Seçili kriterlere göre ilgili stok hareketleri / miktarları listelendi. ` +
-                `Detayları aşağıdaki tabloda görebilirsiniz.`;
-        }
-
-        return {
-            content,
-            data,
-            ui_component: action.display || 'table'
-        };
-
-    } catch (error: any) {
-        console.error("Inventory Action Error:", error);
         return {
             content: "Stok verisi işlenirken hata oluştu: " + error.message,
             data: null,
@@ -251,5 +482,3 @@ async function executeInventoryOdooAction(rawContent: string, userQuery: string)
         };
     }
 }
-
-

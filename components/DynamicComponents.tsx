@@ -4,7 +4,7 @@
 
 import React from 'react';
 import styles from './DynamicComponents.module.css';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line, Area, AreaChart, PieChart, Pie, Cell } from 'recharts';
 import { Download, FileSpreadsheet, FileText, TrendingUp } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { useRef } from 'react';
@@ -12,8 +12,10 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+const SEGMENT_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+
 interface DynamicComponentProps {
-    type: 'table' | 'chart' | 'stat' | 'trend';
+    type: 'table' | 'chart' | 'stat' | 'trend' | 'forecast_chart' | 'segment_chart';
     data: any;
 }
 
@@ -199,6 +201,89 @@ export default function DynamicWidget({ type, data }: DynamicComponentProps) {
                                 <Bar dataKey={dataKey} fill="#adfa1d" radius={[4, 4, 0, 0]} name={formatHeader(dataKey)} />
                             </BarChart>
                         )}
+                    </ResponsiveContainer>
+                </div>
+            </div>
+        );
+    }
+
+    // --- FORECAST CHART (Prophet with confidence bands) ---
+    if (type === 'forecast_chart') {
+        if (!Array.isArray(data) || data.length === 0) return null;
+
+        return (
+            <div className={styles.dynamicWidget}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div className={styles.chartTitle}>
+                        <TrendingUp size={16} style={{ marginRight: '8px', color: '#3b82f6' }} />
+                        <span>Prophet Satış Tahmini</span>
+                    </div>
+                    <button onClick={downloadChartAsImage} className={styles.downloadButton} title="Grafiği İndir">
+                        <Download size={16} /> <span>İndir</span>
+                    </button>
+                </div>
+                <div className={styles.chartContainer} ref={chartRef}>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={data}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                            <XAxis dataKey="name" stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
+                            <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
+                            <Tooltip
+                                contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }}
+                                itemStyle={{ color: '#fff' }}
+                            />
+                            <Legend />
+                            {data[0]?.upper_bound != null && (
+                                <Area type="monotone" dataKey="upper_bound" stroke="none" fill="#3b82f6" fillOpacity={0.15} name="Üst Sınır" />
+                            )}
+                            {data[0]?.lower_bound != null && (
+                                <Area type="monotone" dataKey="lower_bound" stroke="none" fill="#3b82f6" fillOpacity={0.05} name="Alt Sınır" />
+                            )}
+                            <Area type="monotone" dataKey="predicted_value" stroke="#3b82f6" strokeWidth={2} fill="#3b82f6" fillOpacity={0.3} dot={{ fill: '#3b82f6' }} name="Tahmin" />
+                        </AreaChart>
+                    </ResponsiveContainer>
+                </div>
+            </div>
+        );
+    }
+
+    // --- SEGMENT PIE CHART (K-Means RFM) ---
+    if (type === 'segment_chart') {
+        if (!Array.isArray(data) || data.length === 0) return null;
+
+        return (
+            <div className={styles.dynamicWidget}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <div className={styles.chartTitle}>
+                        <span>Müşteri Segmentasyonu (RFM)</span>
+                    </div>
+                    <button onClick={downloadChartAsImage} className={styles.downloadButton} title="Grafiği İndir">
+                        <Download size={16} /> <span>İndir</span>
+                    </button>
+                </div>
+                <div className={styles.chartContainer} ref={chartRef} style={{ height: '350px' }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                            <Pie
+                                data={data}
+                                dataKey="customer_count"
+                                nameKey="name"
+                                cx="50%"
+                                cy="50%"
+                                outerRadius={110}
+                                label={({ name, value }: any) => `${name}: ${value}`}
+                                labelLine={{ stroke: '#888888' }}
+                            >
+                                {data.map((_: any, index: number) => (
+                                    <Cell key={`cell-${index}`} fill={SEGMENT_COLORS[index % SEGMENT_COLORS.length]} />
+                                ))}
+                            </Pie>
+                            <Tooltip
+                                contentStyle={{ backgroundColor: '#1f2937', border: 'none', borderRadius: '8px' }}
+                                itemStyle={{ color: '#fff' }}
+                            />
+                            <Legend />
+                        </PieChart>
                     </ResponsiveContainer>
                 </div>
             </div>

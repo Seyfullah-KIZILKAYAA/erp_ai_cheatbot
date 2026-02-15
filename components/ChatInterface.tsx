@@ -2,7 +2,8 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText, ShoppingCart, Users, Package, FileText as FileTextIcon, LayoutDashboard, Loader2, CheckCircle2, Zap } from 'lucide-react'
+import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText, ShoppingCart, Users, Package, FileText as FileTextIcon, LayoutDashboard, Loader2, CheckCircle2, Zap, BarChart3 } from 'lucide-react'
+import Link from 'next/link'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import styles from './ChatInterface.module.css'
@@ -413,6 +414,9 @@ export default function ChatInterface() {
                     </div>
 
                     <div className={styles.headerActions}>
+                        <Link href="/analytics" className={styles.actionButton} title="ERPO Analitik Paneli" style={{ textDecoration: 'none' }}>
+                            <BarChart3 size={20} />
+                        </Link>
                         <button onClick={() => setIsDashboardOpen(true)} className={`${styles.actionButton} ${isDashboardOpen ? styles.activeAction : ''}`} title="Canlı Kartlar (Panel)">
                             <LayoutDashboard size={20} />
                         </button>

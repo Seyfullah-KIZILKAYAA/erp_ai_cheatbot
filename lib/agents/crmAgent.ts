@@ -2,7 +2,16 @@
 
 /**
  * CRM AGENT
- * Specialized in leads, opportunities and sales pipeline KPIs
+ * Specialized in leads, opportunities, sales pipeline and CRM KPIs.
+ *
+ * Intent-based architecture:
+ * - opportunity_list: Fırsat listesi
+ * - opportunity_summary: CRM özeti / istatistikleri
+ * - open_opportunities: Açık fırsatlar (probability > 0)
+ * - won_opportunities: Kazanılan fırsatlar (probability >= 100)
+ * - pipeline_chart: Satış hunisi dağılımı (chart)
+ * - revenue_forecast: Beklenen gelir analizi
+ * - stage_analysis: Aşama bazlı analiz (chart)
  */
 
 import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
@@ -11,53 +20,58 @@ import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
+type CrmIntent =
+    | "opportunity_list"
+    | "opportunity_summary"
+    | "open_opportunities"
+    | "won_opportunities"
+    | "pipeline_chart"
+    | "revenue_forecast"
+    | "stage_analysis";
+
+const LEAD_FIELDS = ["id", "name", "partner_id", "stage_id", "probability", "expected_revenue"];
+
 export async function processCrmQuery(userQuery: string, history: any[]) {
     const lower = userQuery.toLowerCase();
 
-    // Hard-coded intent: açık CRM fırsatları ve toplam beklenen gelir
-    if (lower.includes("açık crm fırsatlarını") || lower.includes("açık fırsatları")) {
-        const action = {
-            type: "query",
-            table: "crm.lead",
-            filters: [
-                { column: "probability", operator: "gt", value: 0 }
-            ],
-            fields: ["id", "name", "partner_id", "stage_id", "probability", "expected_revenue"],
-            limit: 50,
-            order: "probability DESC",
-            display: "table"
-        };
-        return executeCrmOdooAction(JSON.stringify(action), userQuery);
+    // --- Hard-coded intents ---
+    if (lower.includes("açık crm fırsatlarını") || lower.includes("açık fırsatları") || lower.includes("aktif fırsatlar")) {
+        return executeCrmAction("open_opportunities", userQuery);
+    }
+    if (lower.includes("kazanılan fırsat") || lower.includes("kazanılmış") || lower.includes("won")) {
+        return executeCrmAction("won_opportunities", userQuery);
+    }
+    if (lower.includes("fırsat listesi") || lower.includes("tüm fırsatları") || lower.includes("crm listesi")) {
+        return executeCrmAction("opportunity_list", userQuery);
+    }
+    if (lower.includes("crm özet") || lower.includes("crm rapor") || lower.includes("fırsat özet") || lower.includes("pipeline özet")) {
+        return executeCrmAction("opportunity_summary", userQuery);
+    }
+    if (lower.includes("satış hunisi") || lower.includes("pipeline grafik") || lower.includes("huni dağılım")) {
+        return executeCrmAction("pipeline_chart", userQuery);
+    }
+    if (lower.includes("beklenen gelir") || lower.includes("revenue forecast") || lower.includes("tahmini gelir")) {
+        return executeCrmAction("revenue_forecast", userQuery);
+    }
+    if (lower.includes("aşama analiz") || lower.includes("stage analiz") || lower.includes("aşama dağılım")) {
+        return executeCrmAction("stage_analysis", userQuery);
     }
 
+    // --- LLM-based intent detection ---
     const systemPrompt = `
     Sen bir **Müşteri İlişkileri (CRM) AI Uzmanısın**. Odoo ERP'de adaylar, fırsatlar ve satış hunisini analiz ediyorsun.
-    Görsel mimarideki **CRM Agent** rolündesin.
 
-    SORUMLULUKLARIN:
-    - Aday ve fırsatları (crm.lead) takip etmek.
-    - Satış hunisi (pipeline) performansını analiz etmek.
-    - Kazanma oranları ve beklenen gelir tahminleri raporlamak.
+    MEVCUT ANALİZ TÜRLERİ:
+    1. "opportunity_list" → Fırsat listesi
+    2. "opportunity_summary" → CRM özeti ve istatistikleri
+    3. "open_opportunities" → Açık fırsatlar
+    4. "won_opportunities" → Kazanılan fırsatlar
+    5. "pipeline_chart" → Satış hunisi dağılımı (grafik)
+    6. "revenue_forecast" → Beklenen gelir analizi
+    7. "stage_analysis" → Aşama bazlı fırsat analizi (grafik)
 
-    KURALLAR:
-    - SADECE GEÇERLİ JSON formatında yanıt ver. Hiçbir ek metin ekleme.
-    - "açık fırsatlar" → probability > 0 filtresi kullan
-    - "kazanılan fırsatlar" → probability >= 100 filtresi kullan
-    - **Limit**: Varsayılan limit 50 olsun, ancak kullanıcı "tüm" derse limit'i 500'e çıkar.
-
-    GEÇERLİ ALANLAR (crm.lead için):
-    - id, name, partner_id, stage_id, probability, expected_revenue
-
-    ÇIKTI FORMATI (ZORUNLU):
-    {
-        "type": "query",
-        "table": "crm.lead",
-        "filters": [],
-        "fields": ["name", "partner_id", "stage_id", "probability", "expected_revenue"],
-        "limit": 50,
-        "order": "probability DESC",
-        "display": "table"
-    }
+    ÇIKTI FORMATI:
+    { "intent": "opportunity_list", "reasoning": "Açıklama" }
     `;
 
     try {
@@ -80,145 +94,269 @@ export async function processCrmQuery(userQuery: string, history: any[]) {
                             { role: "user", content: userQuery }
                         ],
                         temperature: 0.1,
-                        max_tokens: 600,
+                        max_tokens: 400,
                         response_format: { type: "json_object" }
                     })
                 }),
-                12000, // 12 second timeout
+                12000,
                 'CRM Agent LLM request timed out'
             ),
             { maxRetries: 2, baseDelay: 1000 }
         );
 
         if (!response.ok) {
-            return {
-                content: "CRM AI yanıt vermedi.",
-                data: null,
-                ui_component: null
-            };
+            return { content: "CRM AI yanıt vermedi.", data: null, ui_component: null };
         }
 
         const data = await response.json();
         const rawContent = data.choices[0]?.message?.content || "{}";
 
-        return await executeCrmOdooAction(rawContent, userQuery);
+        let parsed: any;
+        try {
+            parsed = JSON.parse(rawContent);
+        } catch {
+            const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+            if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+            else parsed = { intent: "opportunity_summary" };
+        }
+
+        return executeCrmAction(parsed.intent || "opportunity_summary", userQuery);
 
     } catch (error: any) {
         console.error("CRM Agent Error:", error);
-        return {
-            content: "CRM verileri alınamadı.",
-            data: null,
-            ui_component: null
-        };
+        return executeCrmAction("opportunity_summary", userQuery);
     }
 }
 
-async function executeCrmOdooAction(rawContent: string, userQuery: string) {
+async function executeCrmAction(intent: CrmIntent, userQuery: string) {
     try {
-        let action: any;
-        try {
-            action = JSON.parse(rawContent);
-        } catch {
-            const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
-            if (jsonMatch) action = JSON.parse(jsonMatch[0]);
-            else throw new Error("No JSON");
-        }
+        switch (intent) {
+            case "opportunity_list": {
+                const data = await searchReadOdoo("crm.lead", [], LEAD_FIELDS, 50, "probability DESC");
+                if (!data?.length) {
+                    return { content: "Sistemde CRM fırsatı bulunamadı.", data: null, ui_component: null };
+                }
 
-        if (!action.type) action.type = "query";
-        if (!action.table) action.table = "crm.lead";
+                const totalRevenue = data.reduce((s: number, r: any) => s + Number(r.expected_revenue || 0), 0);
 
-        const allowedTables = ["crm.lead"];
-        if (!allowedTables.includes(action.table)) {
-            action.table = "crm.lead";
-        }
+                const tableData = data.map((r: any, i: number) => ({
+                    sira: i + 1,
+                    firsat: r.name,
+                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : (r.partner_id || '-'),
+                    asama: Array.isArray(r.stage_id) ? r.stage_id[1] : (r.stage_id || '-'),
+                    olasilik: `%${r.probability}`,
+                    beklenen_gelir: Number(r.expected_revenue).toLocaleString('tr-TR', { maximumFractionDigits: 2 })
+                }));
 
-        const buildOdooDomain = (filters: any[]) => {
-            if (!filters) return [];
+                return {
+                    content:
+                        `## 📈 CRM Fırsat Listesi\n\n` +
+                        `Toplam **${data.length}** fırsat listelendi.\n` +
+                        `Toplam beklenen gelir: **${totalRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**`,
+                    data: tableData,
+                    ui_component: 'table'
+                };
+            }
 
-            const allowedColumns = ["id", "name", "partner_id", "stage_id", "probability", "expected_revenue"];
+            case "opportunity_summary": {
+                const totalLeads = await countOdoo("crm.lead", []);
 
-            return filters
-                .filter((f: any) => f && typeof f.column === "string" && f.column.trim() && allowedColumns.includes(f.column))
-                .map((f: any) => {
-                    if (f.operator === 'ilike') return [f.column, 'ilike', f.value];
-                    if (f.operator === 'eq') return [f.column, '=', f.value];
-                    if (f.operator === 'gt') return [f.column, '>', f.value];
-                    if (f.operator === 'lt') return [f.column, '<', f.value];
-                    if (f.operator === 'gte') return [f.column, '>=', f.value];
-                    if (f.operator === 'lte') return [f.column, '<=', f.value];
-                    return [f.column, '=', f.value];
+                const leads = await searchReadOdoo(
+                    "crm.lead", [], ["probability", "expected_revenue", "stage_id"], 500, ""
+                );
+
+                const open = (leads || []).filter((l: any) => Number(l.probability) > 0 && Number(l.probability) < 100);
+                const won = (leads || []).filter((l: any) => Number(l.probability) >= 100);
+                const lost = (leads || []).filter((l: any) => Number(l.probability) === 0);
+
+                const totalExpectedRevenue = open.reduce((s: number, l: any) => s + Number(l.expected_revenue || 0), 0);
+                const wonRevenue = won.reduce((s: number, l: any) => s + Number(l.expected_revenue || 0), 0);
+                const avgProbability = open.length
+                    ? (open.reduce((s: number, l: any) => s + Number(l.probability || 0), 0) / open.length)
+                    : 0;
+
+                const winRate = totalLeads ? ((won.length / totalLeads) * 100).toFixed(1) : '0';
+
+                // Stage distribution
+                const stageCounts: Record<string, number> = {};
+                (leads || []).forEach((l: any) => {
+                    const stage = Array.isArray(l.stage_id) ? l.stage_id[1] : (l.stage_id || 'Belirtilmemiş');
+                    stageCounts[stage] = (stageCounts[stage] || 0) + 1;
                 });
-        };
 
-        if (action.type === "count") {
-            const domain = buildOdooDomain(action.filters);
-            const count = await countOdoo(action.table, domain);
-            return {
-                content: `**CRM Raporu:** Toplam **${count}** kayıt bulundu.`,
-                data: { count },
-                ui_component: "stat"
-            };
+                const stageLines = Object.entries(stageCounts)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 5)
+                    .map(([stage, count]) => `- **${stage}**: ${count} fırsat`)
+                    .join('\n');
+
+                return {
+                    content:
+                        `## 📈 CRM Departmanı Özeti\n\n` +
+                        `| Metrik | Değer |\n|--------|-------|\n` +
+                        `| Toplam Fırsat | **${totalLeads}** |\n` +
+                        `| Açık Fırsat | **${open.length}** |\n` +
+                        `| Kazanılan | **${won.length}** |\n` +
+                        `| Kaybedilen / Soğuk | **${lost.length}** |\n` +
+                        `| Kazanma Oranı | **%${winRate}** |\n` +
+                        `| Ort. Olasılık (Açık) | **%${avgProbability.toFixed(1)}** |\n` +
+                        `| Beklenen Gelir (Açık) | **${totalExpectedRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
+                        `| Kazanılan Gelir | **${wonRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n\n` +
+                        `**Aşama Dağılımı (Top 5):**\n${stageLines}`,
+                    data: { totalLeads, openCount: open.length, wonCount: won.length, lostCount: lost.length, totalExpectedRevenue, wonRevenue },
+                    ui_component: null
+                };
+            }
+
+            case "open_opportunities": {
+                const data = await searchReadOdoo(
+                    "crm.lead", [["probability", ">", 0], ["probability", "<", 100]], LEAD_FIELDS, 50, "probability DESC"
+                );
+                if (!data?.length) {
+                    return { content: "Açık CRM fırsatı bulunmuyor.", data: null, ui_component: null };
+                }
+
+                const totalRevenue = data.reduce((s: number, r: any) => s + Number(r.expected_revenue || 0), 0);
+
+                const tableData = data.map((r: any, i: number) => ({
+                    sira: i + 1,
+                    firsat: r.name,
+                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : (r.partner_id || '-'),
+                    asama: Array.isArray(r.stage_id) ? r.stage_id[1] : (r.stage_id || '-'),
+                    olasilik: `%${r.probability}`,
+                    beklenen_gelir: Number(r.expected_revenue).toLocaleString('tr-TR', { maximumFractionDigits: 2 })
+                }));
+
+                return {
+                    content:
+                        `## 🟢 Açık CRM Fırsatları\n\n` +
+                        `**${data.length}** açık fırsat mevcut.\n` +
+                        `Toplam beklenen gelir: **${totalRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**`,
+                    data: tableData,
+                    ui_component: 'table'
+                };
+            }
+
+            case "won_opportunities": {
+                const data = await searchReadOdoo(
+                    "crm.lead", [["probability", ">=", 100]], LEAD_FIELDS, 50, "expected_revenue DESC"
+                );
+                if (!data?.length) {
+                    return { content: "Henüz kazanılmış fırsat bulunmuyor.", data: null, ui_component: null };
+                }
+
+                const totalRevenue = data.reduce((s: number, r: any) => s + Number(r.expected_revenue || 0), 0);
+
+                const tableData = data.map((r: any, i: number) => ({
+                    sira: i + 1,
+                    firsat: r.name,
+                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : (r.partner_id || '-'),
+                    kazanilan_gelir: Number(r.expected_revenue).toLocaleString('tr-TR', { maximumFractionDigits: 2 })
+                }));
+
+                return {
+                    content:
+                        `## 🏆 Kazanılan Fırsatlar\n\n` +
+                        `**${data.length}** fırsat başarıyla kazanıldı.\n` +
+                        `Toplam kazanılan gelir: **${totalRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**`,
+                    data: tableData,
+                    ui_component: 'table'
+                };
+            }
+
+            case "pipeline_chart":
+            case "stage_analysis": {
+                const leads = await searchReadOdoo("crm.lead", [], ["stage_id", "expected_revenue"], 500, "");
+                if (!leads?.length) {
+                    return { content: "Pipeline analizi için yeterli veri yok.", data: null, ui_component: null };
+                }
+
+                const stageData: Record<string, { count: number; revenue: number }> = {};
+                leads.forEach((l: any) => {
+                    const stage = Array.isArray(l.stage_id) ? l.stage_id[1] : (l.stage_id || 'Belirtilmemiş');
+                    if (!stageData[stage]) stageData[stage] = { count: 0, revenue: 0 };
+                    stageData[stage].count++;
+                    stageData[stage].revenue += Number(l.expected_revenue || 0);
+                });
+
+                const chartData = Object.entries(stageData)
+                    .map(([name, data]) => ({
+                        name: name.length > 18 ? name.substring(0, 18) + '...' : name,
+                        firsat_sayisi: data.count,
+                        beklenen_gelir: Math.round(data.revenue)
+                    }));
+
+                const totalPipeline = leads.reduce((s: number, l: any) => s + Number(l.expected_revenue || 0), 0);
+
+                return {
+                    content:
+                        `## 📊 Satış Hunisi (Pipeline) Analizi\n\n` +
+                        `Toplam **${leads.length}** fırsat, **${chartData.length}** aşamaya dağılmış durumda.\n` +
+                        `Pipeline toplam değeri: **${totalPipeline.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**\n\n` +
+                        chartData.map(d => `- **${d.name}**: ${d.firsat_sayisi} fırsat (${d.beklenen_gelir.toLocaleString('tr-TR')} ₺)`).join('\n'),
+                    data: chartData,
+                    ui_component: 'chart'
+                };
+            }
+
+            case "revenue_forecast": {
+                const leads = await searchReadOdoo(
+                    "crm.lead", [["probability", ">", 0]], ["probability", "expected_revenue"], 500, ""
+                );
+                if (!leads?.length) {
+                    return { content: "Gelir tahmini için yeterli açık fırsat yok.", data: null, ui_component: null };
+                }
+
+                // Weighted revenue = expected_revenue * (probability / 100)
+                const weightedTotal = leads.reduce((s: number, l: any) => {
+                    return s + (Number(l.expected_revenue || 0) * Number(l.probability || 0) / 100);
+                }, 0);
+
+                const rawTotal = leads.reduce((s: number, l: any) => s + Number(l.expected_revenue || 0), 0);
+
+                // Group by probability ranges
+                const ranges = [
+                    { label: '%0-25 (Düşük)', min: 0, max: 25 },
+                    { label: '%26-50 (Orta)', min: 26, max: 50 },
+                    { label: '%51-75 (Yüksek)', min: 51, max: 75 },
+                    { label: '%76-99 (Çok Yüksek)', min: 76, max: 99 },
+                    { label: '%100 (Kazanılan)', min: 100, max: 100 },
+                ];
+
+                const chartData = ranges.map(range => {
+                    const inRange = leads.filter((l: any) => {
+                        const p = Number(l.probability);
+                        return p >= range.min && p <= range.max;
+                    });
+                    return {
+                        name: range.label,
+                        firsat_sayisi: inRange.length,
+                        beklenen_gelir: Math.round(inRange.reduce((s: number, l: any) => s + Number(l.expected_revenue || 0), 0))
+                    };
+                }).filter(d => d.firsat_sayisi > 0);
+
+                return {
+                    content:
+                        `## 💰 CRM Beklenen Gelir Analizi\n\n` +
+                        `| Metrik | Değer |\n|--------|-------|\n` +
+                        `| Toplam Beklenen Gelir | **${rawTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
+                        `| Ağırlıklı Gelir Tahmini | **${weightedTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
+                        `| Açık Fırsat Sayısı | **${leads.length}** |\n\n` +
+                        `Ağırlıklı gelir = beklenen gelir x olasılık oranı`,
+                    data: chartData,
+                    ui_component: 'chart'
+                };
+            }
+
+            default:
+                return executeCrmAction("opportunity_summary", userQuery);
         }
-
-        const baseFieldsByTable: Record<string, string[]> = {
-            "crm.lead": ["id", "name", "partner_id", "stage_id", "probability", "expected_revenue"]
-        };
-
-        const domain = buildOdooDomain(action.filters);
-        const requestedFields: string[] = Array.isArray(action.fields) ? action.fields : [];
-        const allowedFields = baseFieldsByTable[action.table] || [];
-
-        let fields: string[];
-        if (requestedFields.length > 0) {
-            fields = requestedFields.filter(f => allowedFields.includes(f));
-            if (fields.length === 0) fields = allowedFields;
-        } else {
-            fields = allowedFields;
-        }
-
-        const data = await searchReadOdoo(
-            action.table,
-            domain,
-            fields,
-            action.limit || 30,
-            action.order || ""
-        );
-
-        if (!data || data.length === 0) {
-            return {
-                content: "Bu kriterlere uygun CRM verisi bulunamadı.",
-                data: null,
-                ui_component: null
-            };
-        }
-
-        // Deterministik CRM özeti
-        const amounts = data
-            .map((r: any) => Number(r.expected_revenue ?? 0))
-            .filter((v: number) => !isNaN(v));
-        const total = amounts.reduce((a: number, b: number) => a + b, 0);
-        const count = amounts.length;
-
-        const wonCount = data.filter((r: any) => Number(r.probability ?? 0) >= 100).length;
-
-        const content =
-            `CRM verilerine göre toplam **${count}** aktif fırsat bulunuyor ve bunların ` +
-            `beklenen toplam geliri **${total.toLocaleString('tr-TR')}** seviyesinde. ` +
-            `Şu ana kadar **${wonCount}** fırsat %100 olasılıkla kazanılmış durumda görünüyor.`;
-
-        return {
-            content,
-            data,
-            ui_component: action.display || "table"
-        };
 
     } catch (error: any) {
         console.error("CRM Action Error:", error);
-        return {
-            content: "CRM verisi işlenirken hata oluştu: " + error.message,
-            data: null,
-            ui_component: null
-        };
+        if (error.message?.includes("ECONNREFUSED")) {
+            return { content: "⚠️ Odoo ERP sistemine bağlanılamıyor. Lütfen Odoo servisinin (localhost:8069) çalıştığından emin olun.", data: null, ui_component: null };
+        }
+        return { content: "CRM verisi işlenirken hata oluştu: " + error.message, data: null, ui_component: null };
     }
 }
-
