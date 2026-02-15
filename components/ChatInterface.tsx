@@ -284,10 +284,10 @@ export default function ChatInterface() {
 
         // Simulate Reasoning Steps
         const steps = [
-            "İstek analiz ediliyor...",
-            "Odoo veritabanına bağlanılıyor...",
-            "İlgili modüller taranıyor...",
-            "Veriler görselleştiriliyor..."
+            "Istek analiz ediliyor...",
+            "Odoo veritabanina baglaniliyor...",
+            "Ilgili moduller taraniyor...",
+            "Veriler gorsellestiriliyor..."
         ];
 
         let stepInterval: any;
@@ -297,7 +297,7 @@ export default function ChatInterface() {
             if (stepCount < steps.length) {
                 setReasoningSteps(prev => {
                     const next = [...prev];
-                    if (stepCount > 0) next[stepCount - 1] = next[stepCount - 1] + " ✅"; // Mark previous as done
+                    if (stepCount > 0) next[stepCount - 1] = next[stepCount - 1] + " done";
                     next.push(steps[stepCount]);
                     return next;
                 });
@@ -326,7 +326,7 @@ export default function ChatInterface() {
             if (isSpeechEnabled) speakText(data.content);
 
             clearInterval(stepInterval);
-            setReasoningSteps([]); // Clear steps when done
+            setReasoningSteps([]);
             const botMessage: Message = {
                 id: (Date.now() + 1).toString(),
                 role: 'bot',
@@ -346,7 +346,7 @@ export default function ChatInterface() {
             updateCurrentSessionMessages([...updatedMessages, {
                 id: (Date.now() + 1).toString(),
                 role: 'bot',
-                content: 'İletişim hatası oluştu.',
+                content: 'Iletisim hatasi olustu.',
                 timestamp: new Date()
             }]);
         } finally {
@@ -371,20 +371,74 @@ export default function ChatInterface() {
                 </div>
 
                 <div className={styles.sessionList}>
-                    <div className={styles.sidebarTitle}>Geçmiş Sohbetler</div>
+                    <div className={styles.sidebarTitle}>Gecmis Sohbetler</div>
                     {sessions.map(session => (
                         <div
                             key={session.id}
                             className={`${styles.sessionItem} ${currentSessionId === session.id ? styles.activeSession : ''}`}
                             onClick={() => setCurrentSessionId(session.id)}
                         >
-                            <MessageSquare size={16} />
+                            <MessageSquare size={15} />
                             <span className={styles.sessionTitle}>{session.title}</span>
                             <button onClick={(e) => deleteSession(e, session.id)} className={styles.deleteButton}>
                                 <Trash2 size={14} />
                             </button>
                         </div>
                     ))}
+                </div>
+
+                {/* TOOLS SECTION */}
+                <div className={styles.sidebarTools}>
+                    <div className={styles.sidebarToolsTitle}>Araclar</div>
+
+                    <Link href="/analytics" className={styles.toolItem}>
+                        <div className={styles.toolIcon} style={{ background: 'rgba(91, 124, 250, 0.08)', color: '#5b7cfa' }}>
+                            <BarChart3 size={16} />
+                        </div>
+                        <div className={styles.toolLabel}>
+                            <span className={styles.toolName}>ERPO Analitik</span>
+                            <span className={styles.toolDesc}>AI raporlama paneli</span>
+                        </div>
+                    </Link>
+
+                    <button
+                        className={`${styles.toolItem} ${isDashboardOpen ? styles.toolItemActive : ''}`}
+                        onClick={() => setIsDashboardOpen(!isDashboardOpen)}
+                    >
+                        <div className={styles.toolIcon} style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981' }}>
+                            <LayoutDashboard size={16} />
+                        </div>
+                        <div className={styles.toolLabel}>
+                            <span className={styles.toolName}>Canli Panel</span>
+                            <span className={styles.toolDesc}>ERP durum kartlari</span>
+                        </div>
+                    </button>
+
+                    <button className={styles.toolItem} onClick={generateReport}>
+                        <div className={styles.toolIcon} style={{ background: 'rgba(249, 115, 22, 0.1)', color: '#f97316' }}>
+                            <FileText size={16} />
+                        </div>
+                        <div className={styles.toolLabel}>
+                            <span className={styles.toolName}>PDF Rapor</span>
+                            <span className={styles.toolDesc}>Sohbeti indir</span>
+                        </div>
+                    </button>
+
+                    <button
+                        className={styles.toolItem}
+                        onClick={() => setIsSpeechEnabled(!isSpeechEnabled)}
+                    >
+                        <div className={styles.toolIcon} style={{
+                            background: isSpeechEnabled ? 'rgba(77, 171, 247, 0.1)' : 'rgba(93, 97, 128, 0.1)',
+                            color: isSpeechEnabled ? '#4dabf7' : '#5d6180'
+                        }}>
+                            {isSpeechEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                        </div>
+                        <div className={styles.toolLabel}>
+                            <span className={styles.toolName}>Sesli Okuma</span>
+                            <span className={styles.toolDesc}>{isSpeechEnabled ? 'Acik' : 'Kapali'}</span>
+                        </div>
+                    </button>
                 </div>
 
                 <div className={styles.sidebarFooter}>
@@ -402,56 +456,34 @@ export default function ChatInterface() {
                 <header className={styles.header}>
                     {!isSidebarOpen && (
                         <button onClick={() => setIsSidebarOpen(true)} className={styles.menuButton}>
-                            <Menu size={24} />
+                            <Menu size={22} />
                         </button>
                     )}
 
                     <div className={styles.headerCenter}>
-                        <div style={{ background: 'var(--primary)', padding: '6px', borderRadius: '6px' }}>
-                            <Bot size={20} color="white" />
-                        </div>
-                        <h2 className={styles.title}>ERP AI Asistanı</h2>
-                    </div>
-
-                    <div className={styles.headerActions}>
-                        <Link href="/analytics" className={styles.actionButton} title="ERPO Analitik Paneli" style={{ textDecoration: 'none' }}>
-                            <BarChart3 size={20} />
-                        </Link>
-                        <button onClick={() => setIsDashboardOpen(true)} className={`${styles.actionButton} ${isDashboardOpen ? styles.activeAction : ''}`} title="Canlı Kartlar (Panel)">
-                            <LayoutDashboard size={20} />
-                        </button>
-                        <button onClick={generateReport} className={styles.actionButton} title="Rapor Oluştur (PDF)">
-                            <FileText size={20} />
-                        </button>
-                        <button
-                            onClick={() => setIsSpeechEnabled(!isSpeechEnabled)}
-                            className={`${styles.actionButton} ${!isSpeechEnabled ? styles.disabledAction : ''}`}
-                            title={isSpeechEnabled ? "Otomatik Okumayı Kapat" : "Otomatik Okumayı Aç"}
-                        >
-                            {isSpeechEnabled ? <Volume2 size={20} /> : <VolumeX size={20} />}
-                        </button>
-                        <Sparkles size={20} className={styles.sparkleIcon} />
+                        <Bot size={20} color="var(--primary)" />
+                        <h2 className={styles.title}>ERP AI Asistan</h2>
                     </div>
                 </header>
 
                 <div className={styles.messagesArea}>
                     {messages.map((msg) => (
                         <div key={msg.id} className={`${styles.message} ${msg.role === 'user' ? styles.userMessage : styles.botMessage}`}>
-                            <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', flexDirection: 'column' }}>
-                                <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', width: '100%' }}>
+                            <div className={styles.messageContent}>
+                                <div className={styles.messageRow}>
                                     {msg.role === 'bot' && (
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                            <Bot size={20} style={{ flexShrink: 0, marginTop: '4px' }} />
+                                        <div className={styles.botIcon}>
+                                            <Bot size={18} />
                                             <button onClick={() => speakText(msg.content)} className={styles.messageSpeakButton} title="Sesli Dinle">
-                                                <Volume2 size={14} />
+                                                <Volume2 size={13} />
                                             </button>
                                         </div>
                                     )}
-                                    <div style={{ whiteSpace: 'pre-wrap', flex: 1 }}>{msg.content}</div>
-                                    {msg.role === 'user' && <User size={20} style={{ flexShrink: 0, marginTop: '4px' }} />}
+                                    <div className={styles.messageText}>{msg.content}</div>
+                                    {msg.role === 'user' && <User size={18} className={styles.userIcon} />}
                                 </div>
                                 {msg.role === 'bot' && msg.data && (
-                                    <div style={{ width: '100%', paddingLeft: '32px' }}>
+                                    <div className={styles.messageDataArea}>
                                         <DynamicWidget type={msg.ui_component || 'table'} data={msg.data} />
                                     </div>
                                 )}
@@ -463,13 +495,13 @@ export default function ChatInterface() {
                             <div className={styles.reasoningContainer}>
                                 <div className={styles.reasoningHeader}>
                                     <Sparkles size={16} className={styles.sparkleIcon} />
-                                    <span>Yapay Zeka Düşünüyor...</span>
+                                    <span>Yapay Zeka Dusunuyor...</span>
                                 </div>
                                 <div className={styles.stepsList}>
                                     {reasoningSteps.map((step, index) => (
                                         <div key={index} className={`${styles.stepItem} ${index === currentStepIndex ? styles.stepActive : styles.stepDone}`}>
                                             {index < currentStepIndex ? <CheckCircle2 size={14} color="#10b981" /> : <Loader2 size={14} className={styles.stepLoader} />}
-                                            <span>{typeof step === 'string' ? step.replace(" ✅", "") : ''}</span>
+                                            <span>{typeof step === 'string' ? step.replace(" done", "") : ''}</span>
                                         </div>
                                     ))}
                                 </div>
@@ -497,7 +529,7 @@ export default function ChatInterface() {
             {/* --- RIGHT SIDEBAR (DASHBOARD) --- */}
             <aside className={`${styles.rightSidebar} ${!isDashboardOpen ? styles.rightSidebarClosed : ''}`}>
                 <div className={styles.sidebarHeader}>
-                    <span className={styles.sidebarTitle} style={{ fontSize: '1rem', color: 'var(--foreground)' }}>Canlı Durum</span>
+                    <span className={styles.sidebarTitle}>Canli Durum</span>
                     <button onClick={() => setIsDashboardOpen(false)} className={styles.closeSidebarButton}>
                         <X size={20} />
                     </button>
@@ -509,39 +541,39 @@ export default function ChatInterface() {
                             <div className={styles.briefingCard} onClick={handleBriefing}>
                                 <div className={styles.briefingHeader}>
                                     <div className={styles.briefingIcon}>
-                                        <Zap size={20} fill="white" />
+                                        <Zap size={18} fill="white" />
                                     </div>
-                                    <span className={styles.briefingTitle}>Günlük Özet Al</span>
+                                    <span className={styles.briefingTitle}>Gunluk Ozet Al</span>
                                 </div>
-                                <div className={styles.briefingDesc}>Yapay zeka ile anlık durum analizi</div>
+                                <div className={styles.briefingDesc}>Yapay zeka ile anlik durum analizi</div>
                             </div>
 
-                            <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Tüm müşterileri listele")}>
+                            <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Tum musterileri listele")}>
                                 <div className={styles.cardHeaderSmall}>
                                     <div className={styles.cardIconSmall}>
-                                        <Users size={18} />
+                                        <Users size={16} />
                                     </div>
-                                    <span className={styles.cardLabelSmall}>Müşteriler</span>
+                                    <span className={styles.cardLabelSmall}>Musteriler</span>
                                 </div>
                                 <div className={styles.cardValueSmall}>{dashboardStats.customers || 0}</div>
                             </div>
 
-                            <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Satış siparişlerini listele")}>
+                            <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Satis siparislerini listele")}>
                                 <div className={styles.cardHeaderSmall}>
                                     <div className={styles.cardIconSmall} style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981' }}>
-                                        <ShoppingCart size={18} />
+                                        <ShoppingCart size={16} />
                                     </div>
-                                    <span className={styles.cardLabelSmall}>Siparişler</span>
+                                    <span className={styles.cardLabelSmall}>Siparisler</span>
                                 </div>
                                 <div className={styles.cardValueSmall}>{dashboardStats.orders || 0}</div>
                             </div>
 
-                            <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Tüm ürünleri listele")}>
+                            <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Tum urunleri listele")}>
                                 <div className={styles.cardHeaderSmall}>
                                     <div className={styles.cardIconSmall} style={{ background: 'rgba(236, 72, 153, 0.1)', color: '#ec4899' }}>
-                                        <Package size={18} />
+                                        <Package size={16} />
                                     </div>
-                                    <span className={styles.cardLabelSmall}>Ürünler</span>
+                                    <span className={styles.cardLabelSmall}>Urunler</span>
                                 </div>
                                 <div className={styles.cardValueSmall}>{dashboardStats.products || 0}</div>
                             </div>
@@ -549,7 +581,7 @@ export default function ChatInterface() {
                             <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Taslak teklifleri listele")}>
                                 <div className={styles.cardHeaderSmall}>
                                     <div className={styles.cardIconSmall} style={{ background: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b' }}>
-                                        <FileTextIcon size={18} />
+                                        <FileTextIcon size={16} />
                                     </div>
                                     <span className={styles.cardLabelSmall}>Teklifler</span>
                                 </div>
@@ -557,7 +589,7 @@ export default function ChatInterface() {
                             </div>
                         </>
                     ) : (
-                        <div style={{ padding: '1rem', color: '#888', textAlign: 'center' }}>Yükleniyor...</div>
+                        <div style={{ padding: '16px', color: 'var(--text-tertiary)', textAlign: 'center', fontSize: '0.85rem' }}>Yukleniyor...</div>
                     )}
                 </div>
             </aside>

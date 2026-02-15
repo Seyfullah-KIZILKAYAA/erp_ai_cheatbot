@@ -1,15 +1,49 @@
 
 :root {
-  --background: #0f172a; /* Slate 900 */
-  --foreground: #f8fafc; /* Slate 50 */
-  --primary: #6366f1; /* Indigo 500 */
-  --primary-hover: #4f46e5; /* Indigo 600 */
-  --secondary: #1e293b; /* Slate 800 */
-  --accent: #38bdf8; /* Sky 400 */
-  --card-bg: rgba(30, 41, 59, 0.7);
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --chat-bubble-user: #6366f1;
-  --chat-bubble-bot: #334155;
+  /* Core - soft dark with cool undertone */
+  --background: #111318;
+  --foreground: #e2e5f0;
+
+  /* Surfaces - progressively lighter, blue-tinted */
+  --surface-1: #191c28;
+  --surface-2: #21253a;
+  --surface-3: #2a2f4a;
+  --surface-4: #343a58;
+
+  /* Borders */
+  --border: rgba(255, 255, 255, 0.07);
+  --border-hover: rgba(255, 255, 255, 0.14);
+
+  /* Text */
+  --text-primary: #e2e5f0;
+  --text-secondary: #8890a8;
+  --text-tertiary: #555d78;
+
+  /* Brand - royal blue */
+  --primary: #5b7cfa;
+  --primary-hover: #7b96ff;
+  --primary-glow: rgba(91, 124, 250, 0.14);
+  --primary-soft: rgba(91, 124, 250, 0.08);
+
+  /* Accents */
+  --accent: #34d399;
+  --coral: #fb7185;
+  --amber: #fbbf24;
+  --sky: #38bdf8;
+  --danger: #f87171;
+  --warning: #fbbf24;
+
+  /* Chat */
+  --user-bubble: linear-gradient(135deg, #5b7cfa 0%, #4a63d8 100%);
+  --user-bubble-solid: #5b7cfa;
+  --bot-bubble: #21253a;
+
+  /* Legacy aliases */
+  --card-bg: var(--surface-1);
+  --glass-border: var(--border);
+  --secondary: var(--surface-2);
+  --chat-bubble-user: var(--user-bubble-solid);
+  --chat-bubble-bot: var(--bot-bubble);
 }
 
 * {
@@ -28,11 +62,7 @@ body {
 body {
   color: var(--foreground);
   background: var(--background);
-  background-image: 
-    radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
-    radial-gradient(at 50% 0%, hsla(225,39%,30%,1) 0, transparent 50%), 
-    radial-gradient(at 100% 0%, hsla(339,49%,30%,1) 0, transparent 50%);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), 'Inter', 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -44,25 +74,38 @@ a {
 
 /* Animations */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 .animate-fade-in {
-  animation: fadeIn 0.3s ease-out forwards;
+  animation: fadeIn 0.25s ease-out forwards;
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
 }
 
 /* Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 5px;
 }
 ::-webkit-scrollbar-track {
-  background: transparent; 
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #475569; 
-  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b; 
+  background: rgba(255, 255, 255, 0.16);
 }

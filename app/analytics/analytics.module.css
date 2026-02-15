@@ -1,0 +1,259 @@
+/* ========================================
+   ANALYTICS PAGE - Ocean Theme
+   ======================================== */
+.page {
+    min-height: 100vh;
+    background: var(--background);
+    color: var(--text-primary);
+}
+
+/* HEADER */
+.header {
+    background: var(--surface-1);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.headerLeft {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.backButton {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    transition: all 0.15s;
+    font-size: 0.85rem;
+}
+
+.backButton:hover {
+    background: var(--surface-3);
+    color: var(--text-primary);
+}
+
+.headerTitle {
+    font-size: 1.25rem;
+    color: var(--primary-hover);
+    margin: 0;
+    font-weight: 600;
+}
+
+.headerSubtitle {
+    color: var(--text-tertiary);
+    font-size: 0.8rem;
+    margin-top: 2px;
+}
+
+.connectionStatus {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+}
+
+/* CONTENT */
+.content {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 32px;
+}
+
+/* KPI GRID */
+.kpiGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+    margin-bottom: 24px;
+}
+
+.kpiCard {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.15s;
+}
+
+.kpiCard:hover {
+    border-color: var(--border-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.kpiIcon {
+    opacity: 0.8;
+}
+
+.kpiValue {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary-hover);
+}
+
+.kpiLabel {
+    font-size: 0.8rem;
+    color: var(--text-tertiary);
+}
+
+/* PLACEHOLDER */
+.placeholder {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 24px;
+    color: var(--text-tertiary);
+    background: var(--surface-1);
+    border-radius: 12px;
+    border: 1px solid var(--border);
+}
+
+.loading {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 24px;
+    color: var(--text-tertiary);
+}
+
+/* REPORT BUTTONS */
+.reportButtons {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.reportButton {
+    padding: 10px 20px;
+    border: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-primary);
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.15s;
+}
+
+.reportButton:hover {
+    background: var(--surface-2);
+    border-color: var(--border-hover);
+}
+
+.reportButtonActive {
+    background: linear-gradient(135deg, var(--primary) 0%, #4a63d8 100%) !important;
+    border-color: var(--primary) !important;
+    color: white;
+    box-shadow: 0 2px 12px rgba(91, 124, 250, 0.2);
+}
+
+.reportButtonDisabled {
+    opacity: 0.5;
+    cursor: wait;
+}
+
+/* REPORT AREA */
+.reportArea {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 32px;
+    min-height: 400px;
+}
+
+.reportLoading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    gap: 14px;
+    color: var(--text-tertiary);
+}
+
+.reportError {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: 10px;
+    padding: 16px;
+    color: #fca5a5;
+}
+
+.reportEmpty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    color: var(--text-tertiary);
+    font-size: 1rem;
+}
+
+.reportMeta {
+    display: flex;
+    gap: 20px;
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--text-tertiary);
+    font-size: 0.8rem;
+}
+
+/* REPORT CONTENT TYPOGRAPHY */
+.reportContent h1 {
+    font-size: 1.4rem;
+    color: var(--primary-hover);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.reportContent h2 {
+    font-size: 1.15rem;
+    color: var(--primary);
+    margin-top: 20px;
+    margin-bottom: 10px;
+}
+
+.reportContent h3 {
+    font-size: 1rem;
+    color: var(--text-primary);
+    margin-top: 16px;
+    margin-bottom: 8px;
+}
+
+.reportContent p {
+    line-height: 1.7;
+    margin-bottom: 10px;
+    color: var(--text-secondary);
+    font-size: 0.925rem;
+}
+
+.reportContent ul {
+    margin-left: 20px;
+    margin-bottom: 10px;
+}
+
+.reportContent li {
+    line-height: 1.7;
+    margin-bottom: 4px;
+    color: var(--text-secondary);
+}
+
+.reportContent strong {
+    color: var(--text-primary);
+}
