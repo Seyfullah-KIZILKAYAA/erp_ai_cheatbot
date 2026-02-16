@@ -13,7 +13,8 @@
  * - position_analysis: Pozisyon bazlı analiz
  */
 
-import { searchReadOdoo, countOdoo, createOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
 
@@ -27,7 +28,8 @@ type HrIntent =
     | "department_breakdown"
     | "headcount"
     | "position_analysis"
-    | "create_employee";
+    | "create_employee"
+    | "update_employee";
 
 const EMPLOYEE_FIELDS = ["id", "name", "work_email", "mobile_phone", "department_id", "job_title"];
 
@@ -35,8 +37,11 @@ export async function processHrQuery(userQuery: string, history: any[], writeEna
     const lower = userQuery.toLowerCase();
 
     // --- Hard-coded intents for WRITE operations ---
-    if (lower.includes("personel oluştur") || lower.includes("personel ekle") || lower.includes("çalışan oluştur") || lower.includes("çalışan ekle") || lower.includes("yeni personel") || lower.includes("yeni çalışan")) {
+    if (lower.includes("personel oluştur") || lower.includes("personel ekle") || lower.includes("çalışan oluştur") || lower.includes("çalışan ekle") || lower.includes("yeni personel") || lower.includes("yeni çalışan") || lower.includes("personel eklenecek")) {
         return executeHrAction("create_employee", userQuery, undefined, writeEnabled);
+    }
+    if (lower.includes("personeli taşı") || lower.includes("personeli güncelle") || lower.includes("çalışanı taşı") || lower.includes("çalışanı güncelle") || lower.includes("şirketine taşı") || lower.includes("şirketine ata") || lower.includes("departmanını değiştir") || lower.includes("personeli transfer")) {
+        return executeHrAction("update_employee", userQuery, undefined, writeEnabled);
     }
 
     // --- Hard-coded intents ---
@@ -70,6 +75,8 @@ export async function processHrQuery(userQuery: string, history: any[], writeEna
     4. "department_breakdown" → Departman dağılımı (grafik)
     5. "headcount" → Toplam çalışan sayısı
     6. "position_analysis" → Pozisyon bazlı analiz
+    7. "create_employee" → Yeni personel oluşturma
+    8. "update_employee" → Personel bilgilerini güncelleme (şirket taşıma, departman değiştirme vb.)
 
     ÇIKTI FORMATI:
     { "intent": "employee_list", "search_term": null, "reasoning": "Açıklama" }
@@ -305,7 +312,7 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
                 };
             }
 
-            // --- WRITE OPERATIONS ---
+            // --- WRITE OPERATIONS (Onay sistemi ile) ---
             case "create_employee": {
                 if (!writeEnabled) {
                     return {
@@ -316,9 +323,9 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
                 }
 
                 const empData = await extractWriteData(userQuery, `Kullanıcının mesajından çalışan/personel bilgilerini çıkar. JSON formatında döndür.
-Alanlar: name (zorunlu), work_email, mobile_phone, department_name, job_title.
+Alanlar: name (zorunlu), work_email, mobile_phone, department_name, job_title, company_name (şirket adı, opsiyonel).
 Sadece JSON döndür, başka bir şey yazma.
-Örnek: {"name": "Ahmet Yılmaz", "work_email": "ahmet@test.com", "job_title": "Yönetici"}
+Örnek: {"name": "Ahmet Yılmaz", "work_email": "ahmet@test.com", "job_title": "Yönetici", "company_name": "TR Company"}
 Eğer yeterli bilgi yoksa {"name": null} döndür.`);
 
                 if (!empData || !empData.name) {
@@ -329,36 +336,34 @@ Eğer yeterli bilgi yoksa {"name": null} döndür.`);
                     };
                 }
 
-                // Build Odoo values
-                const values: Record<string, any> = { name: empData.name };
-                if (empData.work_email) values.work_email = empData.work_email;
-                if (empData.mobile_phone) values.mobile_phone = empData.mobile_phone;
-                if (empData.job_title) values.job_title = empData.job_title;
+                return buildWriteConfirmationResponse('create_employee', 'hr', empData);
+            }
 
-                // If department_name provided, search for it
-                if (empData.department_name) {
-                    const depts = await searchReadOdoo("hr.department", [["name", "ilike", empData.department_name]], ["id", "name"], 1);
-                    if (depts?.length) {
-                        values.department_id = depts[0].id;
-                    }
+            case "update_employee": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** Personel güncellemek için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
                 }
 
-                const newEmpId = await createOdoo("hr.employee", values);
-                const created = await searchReadOdoo("hr.employee", [["id", "=", newEmpId]], EMPLOYEE_FIELDS, 1);
+                const updateData = await extractWriteData(userQuery, `Kullanıcının mesajından personel güncelleme bilgilerini çıkar. JSON formatında döndür.
+Alanlar: employee_name (güncellenecek personelin mevcut adı, zorunlu), company_name (yeni şirket adı), department_name (yeni departman adı), job_title (yeni pozisyon), work_email (yeni e-posta), mobile_phone (yeni telefon).
+Sadece değişecek alanları ekle. Değişmeyen alanları ekleme.
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"employee_name": "Ahmet Yılmaz", "company_name": "TR Company"}
+Eğer personel adı bulunamadıysa {"employee_name": null} döndür.`);
 
-                return {
-                    content:
-                        `## Personel Başarıyla Oluşturuldu!\n\n` +
-                        `| Alan | Değer |\n|------|-------|\n` +
-                        `| ID | **${newEmpId}** |\n` +
-                        `| Ad | **${empData.name}** |\n` +
-                        (empData.work_email ? `| Email | **${empData.work_email}** |\n` : '') +
-                        (empData.job_title ? `| Pozisyon | **${empData.job_title}** |\n` : '') +
-                        (empData.department_name ? `| Departman | **${empData.department_name}** |\n` : '') +
-                        `\nKayıt Odoo'da başarıyla oluşturuldu.`,
-                    data: created,
-                    ui_component: 'table'
-                };
+                if (!updateData || !updateData.employee_name) {
+                    return {
+                        content: "Personel güncellemek için personel adı gerekli.\n\n**Örnek:**\n- \"Test personelini TR Company şirketine taşı\"\n- \"Ahmet Yılmaz'ın departmanını IT olarak değiştir\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                return buildWriteConfirmationResponse('update_employee', 'hr', updateData);
             }
 
             default:

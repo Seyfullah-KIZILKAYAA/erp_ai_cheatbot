@@ -10,6 +10,7 @@ import * as XLSX from 'xlsx'
 import styles from './ChatInterface.module.css'
 import DynamicWidget from './DynamicComponents'
 import SettingsPanel from './SettingsPanel'
+import WriteConfirmation from './WriteConfirmation'
 import { AppSettings, DEFAULT_SETTINGS, SETTINGS_KEY } from '@/lib/types/settings'
 
 
@@ -19,7 +20,7 @@ interface Message {
     content: string
     timestamp: Date
     data?: any
-    ui_component?: 'table' | 'chart' | 'stat' | 'trend'
+    ui_component?: 'table' | 'chart' | 'stat' | 'trend' | 'forecast_chart' | 'segment_chart' | 'write_confirmation'
     metadata?: {
         agent?: string
         confidence?: number
@@ -405,6 +406,144 @@ export default function ChatInterface() {
         doc.save(`ERP_Rapor_${Date.now()}.pdf`);
     };
 
+    // --- Write Confirmation Handlers ---
+    const markActionResolved = (actionId: string, status: 'confirmed' | 'cancelled') => {
+        setSessions(prev => prev.map(s => {
+            if (s.id !== currentSessionId) return s;
+            return {
+                ...s,
+                messages: s.messages.map(m => {
+                    if (m.data?.pendingAction?.actionId === actionId) {
+                        return {
+                            ...m,
+                            data: {
+                                ...m.data,
+                                pendingAction: { ...m.data.pendingAction, resolved: status }
+                            }
+                        };
+                    }
+                    return m;
+                })
+            };
+        }));
+    };
+
+    const advanceToConfirmStep = (actionId: string) => {
+        setSessions(prev => prev.map(s => {
+            if (s.id !== currentSessionId) return s;
+            return {
+                ...s,
+                messages: s.messages.map(m => {
+                    if (m.data?.pendingAction?.actionId === actionId) {
+                        return {
+                            ...m,
+                            content: `## ${m.data.title}\n\nAşağıdaki veriler Odoo'ya kaydedilecek. Onaylıyor musunuz?`,
+                            data: {
+                                ...m.data,
+                                pendingAction: { ...m.data.pendingAction, step: 'confirm' }
+                            }
+                        };
+                    }
+                    return m;
+                })
+            };
+        }));
+    };
+
+    const handleWriteAction = async (actionId: string, decision: 'confirm' | 'cancel') => {
+        const currentSession = sessions.find(s => s.id === currentSessionId);
+        if (!currentSession) return;
+
+        const targetMsg = currentSession.messages.find(
+            (m: Message) => m.data?.pendingAction?.actionId === actionId
+        );
+        if (!targetMsg) return;
+
+        const pendingAction = targetMsg.data.pendingAction;
+
+        if (decision === 'cancel') {
+            markActionResolved(actionId, 'cancelled');
+            if (pendingAction.step === 'missing_check') {
+                const botMsg: Message = {
+                    id: Date.now().toString(),
+                    role: 'bot',
+                    content: 'Tamam, lütfen eksik bilgileri ekleyerek tekrar deneyin.\n\nEksik alanlar:\n' +
+                        pendingAction.missingFields.map((f: string) => `- **${f}**`).join('\n'),
+                    timestamp: new Date()
+                };
+                setSessions(prev => prev.map(s => {
+                    if (s.id !== currentSessionId) return s;
+                    return { ...s, messages: [...s.messages, botMsg] };
+                }));
+            } else {
+                const botMsg: Message = {
+                    id: Date.now().toString(),
+                    role: 'bot',
+                    content: 'İşlem iptal edildi. Kayıt Odoo\'ya yazılmadı.',
+                    timestamp: new Date()
+                };
+                setSessions(prev => prev.map(s => {
+                    if (s.id !== currentSessionId) return s;
+                    return { ...s, messages: [...s.messages, botMsg] };
+                }));
+            }
+            return;
+        }
+
+        // decision === 'confirm'
+        if (pendingAction.step === 'missing_check') {
+            advanceToConfirmStep(actionId);
+            return;
+        }
+
+        // step === 'confirm' -> actually save to Odoo
+        setIsLoading(true);
+        try {
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    message: '__WRITE_CONFIRM__',
+                    history: [],
+                    userContext: { username: 'Misafir' },
+                    sessionId: memorySessionId,
+                    writeEnabled: appSettings.dataOperations.writeEnabled,
+                    writeAction: pendingAction
+                })
+            });
+
+            const data = await response.json();
+            markActionResolved(actionId, 'confirmed');
+
+            const botMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'bot',
+                content: data.content,
+                data: data.data,
+                ui_component: data.ui_component,
+                timestamp: new Date()
+            };
+            setSessions(prev => prev.map(s => {
+                if (s.id !== currentSessionId) return s;
+                return { ...s, messages: [...s.messages, botMsg] };
+            }));
+        } catch (err: any) {
+            console.error('Write Confirm Error:', err);
+            const errorMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'bot',
+                content: 'Kayıt sırasında hata oluştu. Lütfen tekrar deneyin.',
+                timestamp: new Date()
+            };
+            setSessions(prev => prev.map(s => {
+                if (s.id !== currentSessionId) return s;
+                return { ...s, messages: [...s.messages, errorMsg] };
+            }));
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleSendMessage = async (e: React.FormEvent | null, textOverride?: string) => {
         if (e) e.preventDefault()
         const finalContent = textOverride || inputValue
@@ -632,7 +771,15 @@ export default function ChatInterface() {
                                 </div>
                                 {msg.role === 'bot' && msg.data && (
                                     <div className={styles.messageDataArea}>
-                                        <DynamicWidget type={msg.ui_component || 'table'} data={msg.data} />
+                                        {msg.ui_component === 'write_confirmation' ? (
+                                            <WriteConfirmation
+                                                data={msg.data}
+                                                onAction={handleWriteAction}
+                                                disabled={isLoading || !!msg.data?.pendingAction?.resolved}
+                                            />
+                                        ) : (
+                                            <DynamicWidget type={msg.ui_component || 'table'} data={msg.data} />
+                                        )}
                                     </div>
                                 )}
                             </div>

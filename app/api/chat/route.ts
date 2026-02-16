@@ -13,6 +13,8 @@ import { processCrmQuery } from "@/lib/agents/crmAgent";
 import { processAnalyticsQuery } from "@/lib/agents/analyticsAgent";
 import { MemoryService } from "@/lib/services/memoryService";
 import { Entity } from "@/lib/types/memory";
+import { PendingWriteAction } from "@/lib/types/writeConfirmation";
+import { createOdoo, writeOdoo, searchReadOdoo } from "@/lib/odooClient";
 
 /**
  * Extract entities from agent response data and store in memory
@@ -56,6 +58,407 @@ function extractEntitiesFromResponse(agentResponse: any, agentKey: string, sessi
     });
 }
 
+async function executeConfirmedWrite(action: PendingWriteAction) {
+    try {
+        switch (action.actionType) {
+            case 'create_customer': {
+                const newId = await createOdoo('res.partner', action.values);
+                const created = await searchReadOdoo('res.partner', [['id', '=', newId]],
+                    ['id', 'name', 'email', 'phone', 'city', 'is_company'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Müşteri Başarıyla Oluşturuldu!\n\n` +
+                        `**ID:** ${newId} | **Ad:** ${action.values.name}\n\nKayıt Odoo'da başarıyla oluşturuldu.`,
+                    data: created,
+                    ui_component: 'table'
+                };
+            }
+            case 'create_employee': {
+                const values = { ...action.values };
+                if (values.department_name) {
+                    const depts = await searchReadOdoo('hr.department',
+                        [['name', 'ilike', values.department_name]], ['id', 'name'], 1);
+                    if (depts?.length) {
+                        values.department_id = depts[0].id;
+                    }
+                    delete values.department_name;
+                }
+                if (values.company_name) {
+                    const companies = await searchReadOdoo('res.company',
+                        [['name', 'ilike', values.company_name]], ['id', 'name'], 1);
+                    if (companies?.length) {
+                        values.company_id = companies[0].id;
+                    }
+                    delete values.company_name;
+                }
+                const newId = await createOdoo('hr.employee', values);
+                const created = await searchReadOdoo('hr.employee', [['id', '=', newId]],
+                    ['id', 'name', 'work_email', 'mobile_phone', 'department_id', 'job_title', 'company_id'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Personel Başarıyla Oluşturuldu!\n\n` +
+                        `**ID:** ${newId} | **Ad:** ${action.values.name}`,
+                    data: created,
+                    ui_component: 'table'
+                };
+            }
+            case 'update_employee': {
+                const values = { ...action.values };
+                const employeeName = values.employee_name;
+                delete values.employee_name;
+
+                // Find the employee
+                const employees = await searchReadOdoo('hr.employee',
+                    [['name', 'ilike', employeeName]], ['id', 'name'], 1);
+                if (!employees?.length) {
+                    return {
+                        role: 'bot',
+                        content: `"${employeeName}" adında personel bulunamadı.`,
+                        data: null, ui_component: null
+                    };
+                }
+
+                // Resolve company_name -> company_id
+                if (values.company_name) {
+                    const companies = await searchReadOdoo('res.company',
+                        [['name', 'ilike', values.company_name]], ['id', 'name'], 1);
+                    if (companies?.length) {
+                        values.company_id = companies[0].id;
+                    } else {
+                        return {
+                            role: 'bot',
+                            content: `"${values.company_name}" adında şirket bulunamadı.`,
+                            data: null, ui_component: null
+                        };
+                    }
+                    delete values.company_name;
+                }
+
+                // Resolve department_name -> department_id
+                if (values.department_name) {
+                    const depts = await searchReadOdoo('hr.department',
+                        [['name', 'ilike', values.department_name]], ['id', 'name'], 1);
+                    if (depts?.length) {
+                        values.department_id = depts[0].id;
+                    }
+                    delete values.department_name;
+                }
+
+                await writeOdoo('hr.employee', [employees[0].id], values);
+                const updated = await searchReadOdoo('hr.employee', [['id', '=', employees[0].id]],
+                    ['id', 'name', 'work_email', 'mobile_phone', 'department_id', 'job_title', 'company_id'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Personel Başarıyla Güncellendi!\n\n` +
+                        `**${employeeName}** bilgileri güncellendi.`,
+                    data: updated,
+                    ui_component: 'table'
+                };
+            }
+            case 'create_product': {
+                const newId = await createOdoo('product.product', action.values);
+                const created = await searchReadOdoo('product.product', [['id', '=', newId]],
+                    ['id', 'name', 'qty_available', 'list_price', 'default_code'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Ürün Başarıyla Oluşturuldu!\n\n` +
+                        `**ID:** ${newId} | **Ürün:** ${action.values.name}`,
+                    data: created,
+                    ui_component: 'table'
+                };
+            }
+            case 'create_order': {
+                const partners = await searchReadOdoo('res.partner',
+                    [['name', 'ilike', action.values.partner_name]], ['id', 'name'], 1);
+                if (!partners?.length) {
+                    return {
+                        role: 'bot',
+                        content: `"${action.values.partner_name}" adında müşteri bulunamadı. Önce müşteri oluşturun.`,
+                        data: null, ui_component: null
+                    };
+                }
+                const newId = await createOdoo('sale.order', { partner_id: partners[0].id });
+                const created = await searchReadOdoo('sale.order', [['id', '=', newId]],
+                    ['id', 'name', 'partner_id', 'amount_total', 'state', 'date_order'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Satış Siparişi Oluşturuldu!\n\n` +
+                        `**Sipariş No:** ${created[0]?.name || newId} | **Müşteri:** ${partners[0].name}`,
+                    data: created,
+                    ui_component: 'table'
+                };
+            }
+            case 'create_invoice': {
+                const partners = await searchReadOdoo('res.partner',
+                    [['name', 'ilike', action.values.partner_name]], ['id', 'name'], 1);
+                if (!partners?.length) {
+                    return {
+                        role: 'bot',
+                        content: `"${action.values.partner_name}" adında müşteri bulunamadı.`,
+                        data: null, ui_component: null
+                    };
+                }
+                const newId = await createOdoo('account.move', { partner_id: partners[0].id, move_type: 'out_invoice' });
+                const created = await searchReadOdoo('account.move', [['id', '=', newId]],
+                    ['id', 'name', 'partner_id', 'amount_total', 'payment_state', 'state', 'invoice_date'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Fatura Oluşturuldu!\n\n` +
+                        `**Fatura No:** ${created[0]?.name || newId} | **Müşteri:** ${partners[0].name}`,
+                    data: created,
+                    ui_component: 'table'
+                };
+            }
+            case 'create_purchase': {
+                const vendors = await searchReadOdoo('res.partner',
+                    [['name', 'ilike', action.values.partner_name], ['is_company', '=', true]], ['id', 'name'], 1);
+                if (!vendors?.length) {
+                    return {
+                        role: 'bot',
+                        content: `"${action.values.partner_name}" adında tedarikçi bulunamadı.`,
+                        data: null, ui_component: null
+                    };
+                }
+                const newId = await createOdoo('purchase.order', { partner_id: vendors[0].id });
+                const created = await searchReadOdoo('purchase.order', [['id', '=', newId]],
+                    ['id', 'name', 'partner_id', 'amount_total', 'state', 'date_order'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Satın Alma Siparişi Oluşturuldu!\n\n` +
+                        `**Sipariş No:** ${created[0]?.name || newId}`,
+                    data: created,
+                    ui_component: 'table'
+                };
+            }
+            case 'create_lead': {
+                const values = { ...action.values };
+                if (values.partner_name) {
+                    const partners = await searchReadOdoo('res.partner',
+                        [['name', 'ilike', values.partner_name]], ['id'], 1);
+                    if (partners?.length) values.partner_id = partners[0].id;
+                    delete values.partner_name;
+                }
+                const newId = await createOdoo('crm.lead', values);
+                const created = await searchReadOdoo('crm.lead', [['id', '=', newId]],
+                    ['id', 'name', 'partner_id', 'stage_id', 'probability', 'expected_revenue'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ CRM Fırsatı Oluşturuldu!\n\n` +
+                        `**ID:** ${newId} | **Fırsat:** ${action.values.name}`,
+                    data: created,
+                    ui_component: 'table'
+                };
+            }
+            case 'confirm_order': {
+                const orders = await searchReadOdoo('sale.order',
+                    [['name', 'ilike', action.values.order_name], ['state', '=', 'draft']],
+                    ['id', 'name', 'partner_id', 'amount_total', 'state', 'date_order'], 1);
+                if (!orders?.length) {
+                    return {
+                        role: 'bot',
+                        content: `"${action.values.order_name}" numaralı taslak sipariş bulunamadı.`,
+                        data: null, ui_component: null
+                    };
+                }
+                await writeOdoo('sale.order', [orders[0].id], { state: 'sale' });
+                return {
+                    role: 'bot',
+                    content: `## ✅ Sipariş Onaylandı!\n\n**${orders[0].name}** siparişi başarıyla onaylandı.`,
+                    data: null,
+                    ui_component: null
+                };
+            }
+            case 'update_customer': {
+                const values = { ...action.values };
+                const customerName = values.customer_name;
+                delete values.customer_name;
+
+                const customers = await searchReadOdoo('res.partner',
+                    [['name', 'ilike', customerName]], ['id', 'name'], 1);
+                if (!customers?.length) {
+                    return {
+                        role: 'bot',
+                        content: `"${customerName}" adında müşteri bulunamadı.`,
+                        data: null, ui_component: null
+                    };
+                }
+
+                await writeOdoo('res.partner', [customers[0].id], values);
+                const updated = await searchReadOdoo('res.partner', [['id', '=', customers[0].id]],
+                    ['id', 'name', 'email', 'phone', 'city', 'is_company'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Müşteri Başarıyla Güncellendi!\n\n**${customerName}** bilgileri güncellendi.`,
+                    data: updated,
+                    ui_component: 'table'
+                };
+            }
+            case 'update_product': {
+                const values = { ...action.values };
+                const productName = values.product_name;
+                delete values.product_name;
+
+                const products = await searchReadOdoo('product.product',
+                    [['name', 'ilike', productName]], ['id', 'name'], 1);
+                if (!products?.length) {
+                    return {
+                        role: 'bot',
+                        content: `"${productName}" adında ürün bulunamadı.`,
+                        data: null, ui_component: null
+                    };
+                }
+
+                await writeOdoo('product.product', [products[0].id], values);
+                const updated = await searchReadOdoo('product.product', [['id', '=', products[0].id]],
+                    ['id', 'name', 'qty_available', 'list_price', 'default_code'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Ürün Başarıyla Güncellendi!\n\n**${productName}** bilgileri güncellendi.`,
+                    data: updated,
+                    ui_component: 'table'
+                };
+            }
+            case 'update_invoice': {
+                const values = { ...action.values };
+                const invoiceName = values.invoice_name;
+                delete values.invoice_name;
+
+                const invoices = await searchReadOdoo('account.move',
+                    [['name', 'ilike', invoiceName]], ['id', 'name'], 1);
+                if (!invoices?.length) {
+                    return {
+                        role: 'bot',
+                        content: `"${invoiceName}" numaralı fatura bulunamadı.`,
+                        data: null, ui_component: null
+                    };
+                }
+
+                // Resolve partner_name -> partner_id
+                if (values.partner_name) {
+                    const partners = await searchReadOdoo('res.partner',
+                        [['name', 'ilike', values.partner_name]], ['id', 'name'], 1);
+                    if (partners?.length) {
+                        values.partner_id = partners[0].id;
+                    } else {
+                        return {
+                            role: 'bot',
+                            content: `"${values.partner_name}" adında müşteri bulunamadı.`,
+                            data: null, ui_component: null
+                        };
+                    }
+                    delete values.partner_name;
+                }
+
+                await writeOdoo('account.move', [invoices[0].id], values);
+                const updated = await searchReadOdoo('account.move', [['id', '=', invoices[0].id]],
+                    ['id', 'name', 'partner_id', 'amount_total', 'payment_state', 'state', 'invoice_date'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Fatura Başarıyla Güncellendi!\n\n**${invoiceName}** bilgileri güncellendi.`,
+                    data: updated,
+                    ui_component: 'table'
+                };
+            }
+            case 'update_purchase': {
+                const values = { ...action.values };
+                const poName = values.po_name;
+                delete values.po_name;
+
+                const pos = await searchReadOdoo('purchase.order',
+                    [['name', 'ilike', poName]], ['id', 'name'], 1);
+                if (!pos?.length) {
+                    return {
+                        role: 'bot',
+                        content: `"${poName}" numaralı satın alma siparişi bulunamadı.`,
+                        data: null, ui_component: null
+                    };
+                }
+
+                // Resolve partner_name -> partner_id
+                if (values.partner_name) {
+                    const vendors = await searchReadOdoo('res.partner',
+                        [['name', 'ilike', values.partner_name], ['is_company', '=', true]], ['id', 'name'], 1);
+                    if (vendors?.length) {
+                        values.partner_id = vendors[0].id;
+                    } else {
+                        return {
+                            role: 'bot',
+                            content: `"${values.partner_name}" adında tedarikçi bulunamadı.`,
+                            data: null, ui_component: null
+                        };
+                    }
+                    delete values.partner_name;
+                }
+
+                await writeOdoo('purchase.order', [pos[0].id], values);
+                const updated = await searchReadOdoo('purchase.order', [['id', '=', pos[0].id]],
+                    ['id', 'name', 'partner_id', 'amount_total', 'state', 'date_order'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ Satın Alma Siparişi Güncellendi!\n\n**${poName}** bilgileri güncellendi.`,
+                    data: updated,
+                    ui_component: 'table'
+                };
+            }
+            case 'update_lead': {
+                const values = { ...action.values };
+                const leadName = values.lead_name;
+                delete values.lead_name;
+
+                const leads = await searchReadOdoo('crm.lead',
+                    [['name', 'ilike', leadName]], ['id', 'name'], 1);
+                if (!leads?.length) {
+                    return {
+                        role: 'bot',
+                        content: `"${leadName}" adında CRM fırsatı bulunamadı.`,
+                        data: null, ui_component: null
+                    };
+                }
+
+                // Resolve partner_name -> partner_id
+                if (values.partner_name) {
+                    const partners = await searchReadOdoo('res.partner',
+                        [['name', 'ilike', values.partner_name]], ['id', 'name'], 1);
+                    if (partners?.length) {
+                        values.partner_id = partners[0].id;
+                    }
+                    delete values.partner_name;
+                }
+
+                // Resolve stage_name -> stage_id
+                if (values.stage_name) {
+                    const stages = await searchReadOdoo('crm.stage',
+                        [['name', 'ilike', values.stage_name]], ['id', 'name'], 1);
+                    if (stages?.length) {
+                        values.stage_id = stages[0].id;
+                    }
+                    delete values.stage_name;
+                }
+
+                await writeOdoo('crm.lead', [leads[0].id], values);
+                const updated = await searchReadOdoo('crm.lead', [['id', '=', leads[0].id]],
+                    ['id', 'name', 'partner_id', 'stage_id', 'probability', 'expected_revenue'], 1);
+                return {
+                    role: 'bot',
+                    content: `## ✅ CRM Fırsatı Güncellendi!\n\n**${leadName}** bilgileri güncellendi.`,
+                    data: updated,
+                    ui_component: 'table'
+                };
+            }
+            default:
+                return { role: 'bot', content: 'Bilinmeyen işlem tipi.', data: null, ui_component: null };
+        }
+    } catch (error: any) {
+        console.error('❌ [WRITE CONFIRM] Error:', error);
+        return {
+            role: 'bot',
+            content: `Kayıt oluşturulurken hata oluştu: ${error.message}`,
+            data: null,
+            ui_component: null
+        };
+    }
+}
+
 const MAX_MESSAGE_LENGTH = 5000;
 const MAX_HISTORY_LENGTH = 100;
 
@@ -72,8 +475,23 @@ export async function POST(req: Request) {
         }
 
         const body = await req.json();
-        const { message, history, userContext, sessionId, writeEnabled } = body;
+        const { message, history, userContext, sessionId, writeEnabled, writeAction } = body;
         const isWriteEnabled = writeEnabled === true;
+
+        // Handle write confirmation action
+        if (message === '__WRITE_CONFIRM__' && writeAction) {
+            if (!isWriteEnabled) {
+                return NextResponse.json({
+                    role: 'bot',
+                    content: '**Yazma izni kapalı.** Lütfen Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.',
+                    data: null,
+                    ui_component: null
+                });
+            }
+            console.log(`📝 [WRITE CONFIRM] Executing: ${writeAction.actionType} (${writeAction.actionId})`);
+            const result = await executeConfirmedWrite(writeAction);
+            return NextResponse.json(result);
+        }
 
         // Input validation
         if (!message || typeof message !== 'string' || message.trim().length === 0) {

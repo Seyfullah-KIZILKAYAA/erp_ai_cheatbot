@@ -14,7 +14,8 @@
  * - stage_analysis: Aşama bazlı analiz (chart)
  */
 
-import { searchReadOdoo, countOdoo, createOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
 
@@ -29,7 +30,8 @@ type CrmIntent =
     | "pipeline_chart"
     | "revenue_forecast"
     | "stage_analysis"
-    | "create_lead";
+    | "create_lead"
+    | "update_lead";
 
 const LEAD_FIELDS = ["id", "name", "partner_id", "stage_id", "probability", "expected_revenue"];
 
@@ -39,6 +41,10 @@ export async function processCrmQuery(userQuery: string, history: any[], writeEn
     // --- Hard-coded intents for WRITE operations ---
     if (lower.includes("fırsat oluştur") || lower.includes("fırsat ekle") || lower.includes("yeni fırsat") || lower.includes("lead oluştur") || lower.includes("lead ekle")) {
         return executeCrmAction("create_lead", userQuery, writeEnabled);
+    }
+
+    if (lower.includes("fırsat güncelle") || lower.includes("fırsatı güncelle") || lower.includes("lead güncelle") || lower.includes("fırsatı düzenle") || lower.includes("fırsat bilgilerini değiştir")) {
+        return executeCrmAction("update_lead", userQuery, writeEnabled);
     }
 
     // --- Hard-coded intents ---
@@ -76,6 +82,8 @@ export async function processCrmQuery(userQuery: string, history: any[], writeEn
     5. "pipeline_chart" → Satış hunisi dağılımı (grafik)
     6. "revenue_forecast" → Beklenen gelir analizi
     7. "stage_analysis" → Aşama bazlı fırsat analizi (grafik)
+    8. "create_lead" → Yeni CRM fırsatı oluşturma
+    9. "update_lead" → CRM fırsatı güncelleme (aşama, gelir vb.)
 
     ÇIKTI FORMATI:
     { "intent": "opportunity_list", "reasoning": "Açıklama" }
@@ -355,7 +363,7 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
                 };
             }
 
-            // --- WRITE OPERATIONS ---
+            // --- WRITE OPERATIONS (Onay sistemi ile) ---
             case "create_lead": {
                 if (!writeEnabled) {
                     return {
@@ -379,29 +387,33 @@ Eğer yeterli bilgi yoksa {"name": null} döndür.`);
                     };
                 }
 
-                const values: Record<string, any> = { name: leadData.name };
-                if (leadData.expected_revenue) values.expected_revenue = leadData.expected_revenue;
+                return buildWriteConfirmationResponse('create_lead', 'crm', leadData);
+            }
 
-                if (leadData.partner_name) {
-                    const partners = await searchReadOdoo("res.partner", [["name", "ilike", leadData.partner_name]], ["id"], 1);
-                    if (partners?.length) values.partner_id = partners[0].id;
+            case "update_lead": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** CRM fırsatı güncellemek için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
                 }
 
-                const newLeadId = await createOdoo("crm.lead", values);
-                const created = await searchReadOdoo("crm.lead", [["id", "=", newLeadId]], LEAD_FIELDS, 1);
+                const updateData = await extractWriteData(userQuery, `Kullanıcının mesajından CRM fırsat güncelleme bilgilerini çıkar. JSON formatında döndür.
+Alanlar: lead_name (güncellenecek fırsatın mevcut adı, zorunlu), name (yeni fırsat adı), partner_name (yeni müşteri adı), expected_revenue (yeni beklenen gelir), stage_name (yeni aşama adı).
+Sadece değişecek alanları ekle. Değişmeyen alanları ekleme.
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"lead_name": "Web Projesi", "expected_revenue": 75000}
+Eğer fırsat adı bulunamadıysa {"lead_name": null} döndür.`);
+                if (!updateData || !updateData.lead_name) {
+                    return {
+                        content: "CRM fırsatı güncellemek için fırsat adı gerekli.\n\n**Örnek:**\n- \"Web Projesi fırsatının beklenen gelirini 75000 TL olarak güncelle\"\n- \"Danışmanlık Teklifi fırsatını 'Teklif' aşamasına taşı\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
 
-                return {
-                    content:
-                        `## CRM Fırsatı Oluşturuldu!\n\n` +
-                        `| Alan | Değer |\n|------|-------|\n` +
-                        `| ID | **${newLeadId}** |\n` +
-                        `| Fırsat | **${leadData.name}** |\n` +
-                        (leadData.partner_name ? `| Müşteri | **${leadData.partner_name}** |\n` : '') +
-                        (leadData.expected_revenue ? `| Beklenen Gelir | **${Number(leadData.expected_revenue).toLocaleString('tr-TR')} ₺** |\n` : '') +
-                        `\nKayıt Odoo CRM'de başarıyla oluşturuldu.`,
-                    data: created,
-                    ui_component: 'table'
-                };
+                return buildWriteConfirmationResponse('update_lead', 'crm', updateData);
             }
 
             default:

@@ -15,7 +15,8 @@
  * - top_purchases: En yüksek tutarlı satın almalar
  */
 
-import { searchReadOdoo, countOdoo, createOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
 
@@ -31,7 +32,8 @@ type PurchasingIntent =
     | "top_vendors"
     | "po_status"
     | "top_purchases"
-    | "create_purchase";
+    | "create_purchase"
+    | "update_purchase";
 
 const PO_FIELDS = ["id", "name", "partner_id", "amount_total", "state", "date_order"];
 const VENDOR_FIELDS = ["id", "name", "email", "phone", "city", "is_company"];
@@ -51,6 +53,10 @@ export async function processPurchasingQuery(userQuery: string, history: any[], 
     // --- Hard-coded intents for WRITE operations ---
     if (lower.includes("satın alma oluştur") || lower.includes("satın alma ekle") || lower.includes("yeni satın alma") || lower.includes("po oluştur")) {
         return executePurchasingAction("create_purchase", userQuery, undefined, writeEnabled);
+    }
+
+    if (lower.includes("satın alma güncelle") || lower.includes("satın almayı güncelle") || lower.includes("po güncelle") || lower.includes("satın almayı düzenle")) {
+        return executePurchasingAction("update_purchase", userQuery, undefined, writeEnabled);
     }
 
     // --- Hard-coded intents ---
@@ -89,6 +95,8 @@ export async function processPurchasingQuery(userQuery: string, history: any[], 
     6. "top_vendors" → En çok alım yapılan tedarikçiler (grafik)
     7. "po_status" → Sipariş durum dağılımı (grafik)
     8. "top_purchases" → En yüksek tutarlı satın almalar
+    9. "create_purchase" → Yeni satın alma siparişi oluşturma
+    10. "update_purchase" → Satın alma siparişini güncelleme
 
     ÇIKTI FORMATI:
     { "intent": "po_list", "search_term": null, "reasoning": "Açıklama" }
@@ -381,7 +389,7 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
                 };
             }
 
-            // --- WRITE OPERATIONS ---
+            // --- WRITE OPERATIONS (Onay sistemi ile) ---
             case "create_purchase": {
                 if (!writeEnabled) {
                     return {
@@ -405,29 +413,33 @@ Eğer tedarikçi adı bulunamadıysa {"partner_name": null} döndür.`);
                     };
                 }
 
-                const vendors = await searchReadOdoo("res.partner", [["name", "ilike", poData.partner_name], ["is_company", "=", true]], ["id", "name"], 1);
-                if (!vendors?.length) {
+                return buildWriteConfirmationResponse('create_purchase', 'purchasing', poData);
+            }
+
+            case "update_purchase": {
+                if (!writeEnabled) {
                     return {
-                        content: `"${poData.partner_name}" adında tedarikçi bulunamadı. Önce tedarikçi kaydı oluşturun.`,
+                        content: "**Yazma izni kapalı.** Satın alma siparişi güncellemek için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
                         data: null,
                         ui_component: null
                     };
                 }
 
-                const newPoId = await createOdoo("purchase.order", { partner_id: vendors[0].id });
-                const created = await searchReadOdoo("purchase.order", [["id", "=", newPoId]], PO_FIELDS, 1);
+                const updateData = await extractWriteData(userQuery, `Kullanıcının mesajından satın alma siparişi güncelleme bilgilerini çıkar. JSON formatında döndür.
+Alanlar: po_name (güncellenecek siparişin numarası, zorunlu), partner_name (yeni tedarikçi adı).
+Sadece değişecek alanları ekle. Değişmeyen alanları ekleme.
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"po_name": "P00001", "partner_name": "ABC Tedarik Ltd"}
+Eğer sipariş numarası bulunamadıysa {"po_name": null} döndür.`);
+                if (!updateData || !updateData.po_name) {
+                    return {
+                        content: "Satın alma siparişi güncellemek için sipariş numarası gerekli.\n\n**Örnek:**\n- \"P00001 siparişinin tedarikçisini ABC Ltd olarak güncelle\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
 
-                return {
-                    content:
-                        `## Satın Alma Siparişi Oluşturuldu!\n\n` +
-                        `| Alan | Değer |\n|------|-------|\n` +
-                        `| Sipariş No | **${created[0]?.name || newPoId}** |\n` +
-                        `| Tedarikçi | **${vendors[0].name}** |\n` +
-                        `| Durum | **Taslak (RFQ)** |\n\n` +
-                        `Sipariş taslak olarak oluşturuldu. Ürün satırları Odoo'dan eklenebilir.`,
-                    data: created,
-                    ui_component: 'table'
-                };
+                return buildWriteConfirmationResponse('update_purchase', 'purchasing', updateData);
             }
 
             default:

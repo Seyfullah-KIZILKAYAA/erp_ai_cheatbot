@@ -4,7 +4,7 @@
 
 ## 🚀 Overview
 
-**ERP AI Chatbot** is a state-of-the-art, multi-agent artificial intelligence ecosystem designed to bridge the gap between complex ERP data and natural language interaction. Built primarily for **Odoo ERP**, it transforms your business management experience by providing a conversational interface that doesn't just answer questions—it analyzes, reasons, and reports like a professional management team.
+**ERP AI Chatbot** is a state-of-the-art, multi-agent artificial intelligence ecosystem designed to bridge the gap between complex ERP data and natural language interaction. Built primarily for **Odoo ERP**, it transforms your business management experience by providing a conversational interface that doesn't just answer questions—it analyzes, reasons, writes records, and reports like a professional management team.
 
 By leveraging the **Llama 3.3 70B** model via high-speed **Groq** inference, the system achieves near-instant response times with deep domain expertise across various business functions.
 
@@ -23,31 +23,60 @@ The core of the system is the **Orchestrator Agent**. Unlike traditional chatbot
 
 ## 🛡️ Meet the Specialized Agents
 
-The system features **6 autonomous agents**, each specialized in a specific business vertical with tailored system prompts and Odoo table access:
+The system features **7 autonomous agents**, each specialized in a specific business vertical with tailored system prompts and Odoo table access:
 
-### � CRM Agent (Customer Relations)
+### 📈 CRM Agent (Customer Relations)
 *   **Focus**: Leads, Opportunities, Pipelines, and Conversion Rates.
-*   **Actions**: Tracks the sales funnel, identifies high-probability deals, and reports on customer touchpoints.
+*   **Read**: Tracks the sales funnel, identifies high-probability deals, and reports on customer touchpoints.
+*   **Write**: Create new CRM leads/opportunities, update lead details (stage, expected revenue, customer).
 
 ### 👥 HR Agent (Human Resources)
 *   **Focus**: Employee records, Attendance, Leaves, and HR Metrics.
-*   **Actions**: Summarizes headcount, tracks daily absences, and provides department-based personnel distribution.
+*   **Read**: Summarizes headcount, tracks daily absences, and provides department-based personnel distribution.
+*   **Write**: Create new employees, update employee info (company, department, position, contact).
 
 ### 🧾 Purchasing Agent (Procurement)
 *   **Focus**: Purchase Orders (PO), Vendors, and Item Procurement.
-*   **Actions**: Monitors pending approvals, evaluates vendor performance, and tracks upcoming material arrivals.
+*   **Read**: Monitors pending approvals, evaluates vendor performance, and tracks upcoming material arrivals.
+*   **Write**: Create new purchase orders, update PO details (vendor).
 
 ### 💰 Finance Agent (Accounting)
 *   **Focus**: Invoices, Payments, Cash Flow, and AR/AP.
-*   **Actions**: Analyzes unpaid invoices, summarizes bank positions, and provides high-level financial health reports.
+*   **Read**: Analyzes unpaid invoices, summarizes bank positions, and provides high-level financial health reports.
+*   **Write**: Create new invoices, update invoice details (customer).
 
 ### 📦 Inventory Agent (Warehouse)
 *   **Focus**: Stock Levels, Product Movements, and Replenishment.
-*   **Actions**: Identifies "Critical Stockout" risks, monitors warehouse transfers, and provides individual product availability.
+*   **Read**: Identifies "Critical Stockout" risks, monitors warehouse transfers, and provides individual product availability.
+*   **Write**: Create new products, update product info (price, code, name).
 
 ### 💼 Sales Agent (Commerce)
 *   **Focus**: Quotations, Sales Orders, Revenue, and Customers.
-*   **Actions**: Calculates monthly revenue trends, lists top-performing products, and manages customer relationships.
+*   **Read**: Calculates monthly revenue trends, lists top-performing products, and manages customer relationships.
+*   **Write**: Create customers/orders, confirm orders, update customer info (email, phone, city).
+
+### 🔬 Analytics Agent (ERPO Platform)
+*   **Focus**: Advanced AI-powered analytics, forecasting, anomaly detection, and customer segmentation.
+*   **Actions**: Time-series forecasting with Prophet, anomaly detection with Isolation Forest, RFM-based customer segmentation with K-Means, daily executive reports.
+
+---
+
+## ✍️ Write Confirmation System
+
+All write operations (create & update) go through a **two-step confirmation flow** to prevent accidental data changes:
+
+```
+User Request → Agent extracts data → Missing field check
+  → [Missing fields?] "These fields are empty, continue?" + Yes/No buttons
+  → [Yes] Preview table: All fields displayed + "Save?" + Yes/No buttons
+  → [Yes] Execute write to Odoo → Success message with result table
+```
+
+**Key Features:**
+- **Inline confirmation cards** inside the chat with field tables (Field / Value / Status columns)
+- **Color-coded status indicators**: Green (filled), Yellow (optional-missing), Red (required-missing)
+- **Stateless architecture**: Pending write data embedded in message payload (no server-side state, serverless-compatible)
+- **Write toggle**: Enable/disable all write operations from the Settings panel
 
 ---
 
@@ -55,9 +84,14 @@ The system features **6 autonomous agents**, each specialized in a specific busi
 
 - **🔍 Chain of Thought (CoT) UI**: Witness the AI's internal reasoning process step-by-step.
 - **📊 Interactive Dashboards**: Real-time data visualization using Recharts.
-- **⚡ Ultra-Low Latency**: Powered by Groq's LPU™ (Language Processing Unit) for sub-second analysis.
+- **⚡ Ultra-Low Latency**: Powered by Groq's LPU (Language Processing Unit) for sub-second analysis.
 - **📥 Enterprise Export**: One-click professional report generation in **PDF** or **Excel (XLSX)**.
 - **🔒 Enterprise Security**: Secure XML-RPC protocol for direct Odoo integration without middleware data storage.
+- **✍️ Two-Step Write Confirmation**: Safe create & update operations with preview and approval flow.
+- **🧠 Session Memory**: Entity-aware context that remembers previously mentioned records.
+- **⚙️ Settings Panel**: Dark mode, write toggle, and user preferences.
+- **🛡️ Rate Limiting**: Built-in request throttling (20 req/min per session).
+- **🔄 Graceful Degradation**: `Promise.allSettled` for partial success in multi-agent workflows.
 
 ---
 
@@ -66,11 +100,12 @@ The system features **6 autonomous agents**, each specialized in a specific busi
 | Layer | Technology |
 | :--- | :--- |
 | **Frontend** | Next.js 16 (App Router), React 19, TypeScript |
-| **Styling** | Tailwind CSS, Framer Motion (Animations) |
+| **Styling** | CSS Modules, Twilight Royal Blue theme |
 | **AI Models** | Llama 3.3 70B (Orchestration & Specialized Analysis) |
 | **Inference** | Groq API |
 | **CRM/ERP** | Odoo XML-RPC API |
 | **Reports** | jsPDF, Recharts, XLSX |
+| **Analytics** | Prophet (Forecasting), Isolation Forest (Anomaly), K-Means (Segmentation) |
 
 ---
 
@@ -115,10 +150,12 @@ Open `http://localhost:3000` in your browser.
 
 ## 📈 Roadmap
 
-- [ ] **Multi-Agent Collaboration**: Enabling agents to talk to each other to solve complex cross-departmental problems.
-- [ ] **Autonomous Action Execution**: Enabling AI to create records (Quotations, Leaves, etc.) with user confirmation.
+- [x] **Multi-Agent Collaboration**: Agents work in parallel for cross-departmental queries.
+- [x] **Write Operations with Confirmation**: Create & update records across all modules with two-step approval.
+- [x] **ERPO Analytics Platform**: Advanced forecasting, anomaly detection, and customer segmentation.
 - [ ] **Voice Interaction**: Integration with Whisper for voice-to-command functionality.
 - [ ] **Custom Agent Creation Tool**: A UI to build your own specialized agents for custom Odoo modules.
+- [ ] **Webhook & Notification System**: Real-time alerts for critical ERP events.
 
 ---
 

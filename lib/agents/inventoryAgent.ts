@@ -15,7 +15,8 @@
  * - stock_chart: Stok durumu bar chart
  */
 
-import { searchReadOdoo, countOdoo, createOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
 
@@ -30,7 +31,8 @@ type InventoryIntent =
     | "stock_movement"
     | "stock_value"
     | "stock_chart"
-    | "create_product";
+    | "create_product"
+    | "update_product";
 
 const PRODUCT_FIELDS = ["id", "name", "qty_available", "list_price", "default_code"];
 const QUANT_FIELDS = ["id", "product_id", "location_id", "quantity", "reserved_quantity"];
@@ -54,6 +56,10 @@ export async function processInventoryQuery(userQuery: string, history: any[], w
     // --- Hard-coded intents for WRITE operations ---
     if (lower.includes("ürün oluştur") || lower.includes("ürün ekle") || lower.includes("yeni ürün")) {
         return executeInventoryAction("create_product", userQuery, undefined, writeEnabled);
+    }
+
+    if (lower.includes("ürün güncelle") || lower.includes("ürünü güncelle") || lower.includes("ürün fiyatını değiştir") || lower.includes("ürünü düzenle") || lower.includes("ürün bilgilerini değiştir")) {
+        return executeInventoryAction("update_product", userQuery, undefined, writeEnabled);
     }
 
     // --- Hard-coded intents for common queries ---
@@ -91,6 +97,8 @@ export async function processInventoryQuery(userQuery: string, history: any[], w
     5. "stock_movement" → Stok hareketleri (giriş/çıkış/transfer)
     6. "stock_value" → Stok değeri analizi (stok miktarı * birim fiyat)
     7. "stock_chart" → Stok durumu grafiği
+    8. "create_product" → Yeni ürün oluşturma
+    9. "update_product" → Ürün bilgilerini güncelleme (fiyat, kod vb.)
 
     KURALLAR:
     - SADECE GEÇERLİ JSON formatında yanıt ver.
@@ -467,7 +475,7 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                 };
             }
 
-            // --- WRITE OPERATIONS ---
+            // --- WRITE OPERATIONS (Onay sistemi ile) ---
             case "create_product": {
                 if (!writeEnabled) {
                     return {
@@ -491,26 +499,33 @@ Eğer yeterli bilgi yoksa {"name": null} döndür.`);
                     };
                 }
 
-                const values: Record<string, any> = { name: prodData.name };
-                if (prodData.list_price) values.list_price = prodData.list_price;
-                if (prodData.default_code) values.default_code = prodData.default_code;
-                if (prodData.type) values.type = prodData.type;
+                return buildWriteConfirmationResponse('create_product', 'inventory', prodData);
+            }
 
-                const newProdId = await createOdoo("product.product", values);
-                const created = await searchReadOdoo("product.product", [["id", "=", newProdId]], PRODUCT_FIELDS, 1);
+            case "update_product": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** Ürün güncellemek için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
+                }
 
-                return {
-                    content:
-                        `## Ürün Başarıyla Oluşturuldu!\n\n` +
-                        `| Alan | Değer |\n|------|-------|\n` +
-                        `| ID | **${newProdId}** |\n` +
-                        `| Ad | **${prodData.name}** |\n` +
-                        (prodData.default_code ? `| Kod | **${prodData.default_code}** |\n` : '') +
-                        (prodData.list_price ? `| Fiyat | **${Number(prodData.list_price).toLocaleString('tr-TR')} ₺** |\n` : '') +
-                        `\nKayıt Odoo'da başarıyla oluşturuldu.`,
-                    data: created,
-                    ui_component: 'table'
-                };
+                const updateData = await extractWriteData(userQuery, `Kullanıcının mesajından ürün güncelleme bilgilerini çıkar. JSON formatında döndür.
+Alanlar: product_name (güncellenecek ürünün mevcut adı, zorunlu), name (yeni ürün adı), list_price (yeni fiyat), default_code (yeni ürün kodu).
+Sadece değişecek alanları ekle. Değişmeyen alanları ekleme.
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"product_name": "Laptop HP", "list_price": 30000}
+Eğer ürün adı bulunamadıysa {"product_name": null} döndür.`);
+                if (!updateData || !updateData.product_name) {
+                    return {
+                        content: "Ürün güncellemek için ürün adı gerekli.\n\n**Örnek:**\n- \"Laptop HP ürününün fiyatını 30000 TL olarak güncelle\"\n- \"Masa Lambası ürün kodunu ML-002 olarak değiştir\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                return buildWriteConfirmationResponse('update_product', 'inventory', updateData);
             }
 
             default:

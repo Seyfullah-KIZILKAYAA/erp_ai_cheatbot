@@ -15,7 +15,8 @@
  * - revenue_breakdown: Gelir kırılımı grafiği
  */
 
-import { searchReadOdoo, countOdoo, createOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
 
@@ -31,7 +32,8 @@ type FinanceIntent =
     | "overdue_analysis"
     | "payment_status"
     | "revenue_breakdown"
-    | "create_invoice";
+    | "create_invoice"
+    | "update_invoice";
 
 const INVOICE_FIELDS = ["id", "name", "partner_id", "amount_total", "payment_state", "state", "invoice_date"];
 const PAYMENT_FIELDS = ["id", "name", "partner_id", "amount", "payment_type", "date", "state"];
@@ -50,6 +52,10 @@ export async function processFinanceQuery(userQuery: string, history: any[], wri
     // --- Hard-coded intents for WRITE operations ---
     if (lower.includes("fatura oluştur") || lower.includes("fatura ekle") || lower.includes("yeni fatura")) {
         return executeFinanceAction("create_invoice", userQuery, writeEnabled);
+    }
+
+    if (lower.includes("fatura güncelle") || lower.includes("faturayı güncelle") || lower.includes("faturayı düzenle") || lower.includes("fatura bilgilerini değiştir")) {
+        return executeFinanceAction("update_invoice", userQuery, writeEnabled);
     }
 
     // --- Hard-coded intents ---
@@ -91,6 +97,8 @@ export async function processFinanceQuery(userQuery: string, history: any[], wri
     6. "overdue_analysis" → Vadesi geçmiş fatura analizi
     7. "payment_status" → Ödeme durumu dağılımı (grafik)
     8. "revenue_breakdown" → Gelir kırılımı grafiği
+    9. "create_invoice" → Yeni fatura oluşturma
+    10. "update_invoice" → Fatura bilgilerini güncelleme
 
     ÇIKTI FORMATI:
     { "intent": "invoice_list", "reasoning": "Açıklama" }
@@ -343,7 +351,7 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
                 };
             }
 
-            // --- WRITE OPERATIONS ---
+            // --- WRITE OPERATIONS (Onay sistemi ile) ---
             case "create_invoice": {
                 if (!writeEnabled) {
                     return {
@@ -367,33 +375,33 @@ Eğer müşteri adı bulunamadıysa {"partner_name": null} döndür.`);
                     };
                 }
 
-                const partners = await searchReadOdoo("res.partner", [["name", "ilike", invoiceData.partner_name]], ["id", "name"], 1);
-                if (!partners?.length) {
+                return buildWriteConfirmationResponse('create_invoice', 'finance', invoiceData);
+            }
+
+            case "update_invoice": {
+                if (!writeEnabled) {
                     return {
-                        content: `"${invoiceData.partner_name}" adında müşteri bulunamadı. Önce müşteri oluşturun.`,
+                        content: "**Yazma izni kapalı.** Fatura güncellemek için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
                         data: null,
                         ui_component: null
                     };
                 }
 
-                const newInvoiceId = await createOdoo("account.move", {
-                    partner_id: partners[0].id,
-                    move_type: "out_invoice"
-                });
+                const updateData = await extractWriteData(userQuery, `Kullanıcının mesajından fatura güncelleme bilgilerini çıkar. JSON formatında döndür.
+Alanlar: invoice_name (güncellenecek faturanın numarası, zorunlu), partner_name (yeni müşteri adı).
+Sadece değişecek alanları ekle. Değişmeyen alanları ekleme.
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"invoice_name": "INV/2024/00001", "partner_name": "Acme Ltd"}
+Eğer fatura numarası bulunamadıysa {"invoice_name": null} döndür.`);
+                if (!updateData || !updateData.invoice_name) {
+                    return {
+                        content: "Fatura güncellemek için fatura numarası gerekli.\n\n**Örnek:**\n- \"INV/2024/00001 faturasının müşterisini Acme Ltd olarak güncelle\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
 
-                const created = await searchReadOdoo("account.move", [["id", "=", newInvoiceId]], INVOICE_FIELDS, 1);
-
-                return {
-                    content:
-                        `## Fatura Oluşturuldu!\n\n` +
-                        `| Alan | Değer |\n|------|-------|\n` +
-                        `| Fatura No | **${created[0]?.name || newInvoiceId}** |\n` +
-                        `| Müşteri | **${partners[0].name}** |\n` +
-                        `| Durum | **Taslak** |\n\n` +
-                        `Fatura taslak olarak oluşturuldu. Kalem satırları Odoo'dan eklenebilir.`,
-                    data: created,
-                    ui_component: 'table'
-                };
+                return buildWriteConfirmationResponse('update_invoice', 'finance', updateData);
             }
 
             default:
