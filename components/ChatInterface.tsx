@@ -2,12 +2,15 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText, ShoppingCart, Users, Package, FileText as FileTextIcon, LayoutDashboard, Loader2, CheckCircle2, Zap, BarChart3 } from 'lucide-react'
+import { Send, Bot, User, Sparkles, Mic, Volume2, VolumeX, MicOff, Plus, MessageSquare, Trash2, X, Menu, FileText, ShoppingCart, Users, Package, FileText as FileTextIcon, LayoutDashboard, Loader2, CheckCircle2, Zap, BarChart3, Settings, Paperclip } from 'lucide-react'
 import Link from 'next/link'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import * as XLSX from 'xlsx'
 import styles from './ChatInterface.module.css'
 import DynamicWidget from './DynamicComponents'
+import SettingsPanel from './SettingsPanel'
+import { AppSettings, DEFAULT_SETTINGS, SETTINGS_KEY } from '@/lib/types/settings'
 
 
 interface Message {
@@ -57,6 +60,18 @@ export default function ChatInterface() {
 
     const [isSidebarOpen, setIsSidebarOpen] = useState(true)
     const [isDashboardOpen, setIsDashboardOpen] = useState(true)
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+
+    // Settings state with localStorage persistence
+    const [appSettings, setAppSettings] = useState<AppSettings>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem(SETTINGS_KEY);
+            if (saved) {
+                try { return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) }; } catch { /* ignore */ }
+            }
+        }
+        return DEFAULT_SETTINGS;
+    })
 
     // Memory session ID for entity tracking
     const [memorySessionId] = useState(() => {
@@ -123,7 +138,134 @@ export default function ChatInterface() {
         }
     }, [isSpeechEnabled]);
 
+    // Save settings & apply theme
+    useEffect(() => {
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(appSettings));
+        document.documentElement.setAttribute('data-theme', appSettings.appearance.theme);
+        // Sync dashboard visibility from settings
+        setIsDashboardOpen(appSettings.dashboard.showLivePanel);
+    }, [appSettings]);
 
+    // Apply theme on mount
+    useEffect(() => {
+        document.documentElement.setAttribute('data-theme', appSettings.appearance.theme);
+    }, []);
+
+    const handleSettingsChange = (newSettings: AppSettings) => {
+        setAppSettings(newSettings);
+    };
+
+    const handleFileUpload = async (file: File) => {
+        if (!appSettings.fileOperations.uploadEnabled) return;
+
+        const maxSize = appSettings.fileOperations.maxFileSizeMB * 1024 * 1024;
+        if (file.size > maxSize) {
+            const errorMsg: Message = {
+                id: Date.now().toString(),
+                role: 'bot',
+                content: `Dosya boyutu cok buyuk. Maksimum ${appSettings.fileOperations.maxFileSizeMB} MB yuklenebilir.`,
+                timestamp: new Date()
+            };
+            updateCurrentSessionMessages([...messages, errorMsg]);
+            return;
+        }
+
+        const ext = file.name.split('.').pop()?.toLowerCase();
+        if (!['xlsx', 'xls', 'csv'].includes(ext || '')) {
+            const errorMsg: Message = {
+                id: Date.now().toString(),
+                role: 'bot',
+                content: 'Sadece Excel (.xlsx, .xls) ve CSV (.csv) dosyalari destekleniyor.',
+                timestamp: new Date()
+            };
+            updateCurrentSessionMessages([...messages, errorMsg]);
+            return;
+        }
+
+        // Show user message
+        const userMsg: Message = {
+            id: Date.now().toString(),
+            role: 'user',
+            content: `📎 Dosya yuklendi: ${file.name}`,
+            timestamp: new Date()
+        };
+        const updatedMessages = [...messages, userMsg];
+        updateCurrentSessionMessages(updatedMessages);
+        setIsLoading(true);
+
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+            const firstSheet = workbook.SheetNames[0];
+            const data = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet]);
+
+            if (!data.length) {
+                updateCurrentSessionMessages([...updatedMessages, {
+                    id: (Date.now() + 1).toString(),
+                    role: 'bot',
+                    content: 'Dosya bos veya okunamiyor.',
+                    timestamp: new Date()
+                }]);
+                return;
+            }
+
+            // Build analysis
+            const rowCount = data.length;
+            const columns = Object.keys(data[0] as object);
+            const preview = data.slice(0, 50);
+
+            // Numeric column stats
+            const numericStats: string[] = [];
+            columns.forEach(col => {
+                const values = data.map((r: any) => Number(r[col])).filter(v => !isNaN(v) && v !== 0);
+                if (values.length > rowCount * 0.5) {
+                    const sum = values.reduce((a, b) => a + b, 0);
+                    const avg = sum / values.length;
+                    const max = Math.max(...values);
+                    const min = Math.min(...values);
+                    numericStats.push(
+                        `- **${col}**: Toplam: ${sum.toLocaleString('tr-TR')}, Ort: ${avg.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}, Min: ${min.toLocaleString('tr-TR')}, Max: ${max.toLocaleString('tr-TR')}`
+                    );
+                }
+            });
+
+            const tableData = preview.map((row: any, i: number) => ({ sira: i + 1, ...row }));
+
+            const analysisContent =
+                `## 📊 Dosya Analizi: ${file.name}\n\n` +
+                `| Metrik | Deger |\n|--------|-------|\n` +
+                `| Satir Sayisi | **${rowCount}** |\n` +
+                `| Sutun Sayisi | **${columns.length}** |\n` +
+                `| Sutunlar | ${columns.join(', ')} |\n\n` +
+                (numericStats.length > 0
+                    ? `### Sayisal Istatistikler\n${numericStats.join('\n')}\n\n`
+                    : '') +
+                `Ilk ${Math.min(50, rowCount)} satir asagida gosteriliyor:`;
+
+            const botMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'bot',
+                content: analysisContent,
+                data: tableData,
+                ui_component: 'table',
+                timestamp: new Date()
+            };
+
+            updateCurrentSessionMessages([...updatedMessages, botMsg]);
+        } catch (err: any) {
+            console.error('File parse error:', err);
+            updateCurrentSessionMessages([...updatedMessages, {
+                id: (Date.now() + 1).toString(),
+                role: 'bot',
+                content: 'Dosya islenirken hata olustu: ' + err.message,
+                timestamp: new Date()
+            }]);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const createNewChat = () => {
         const newId = Date.now().toString();
@@ -318,7 +460,8 @@ export default function ChatInterface() {
                     userContext: {
                         username: 'Misafir'
                     },
-                    sessionId: memorySessionId
+                    sessionId: memorySessionId,
+                    writeEnabled: appSettings.dataOperations.writeEnabled
                 })
             });
 
@@ -439,16 +582,21 @@ export default function ChatInterface() {
                             <span className={styles.toolDesc}>{isSpeechEnabled ? 'Acik' : 'Kapali'}</span>
                         </div>
                     </button>
+
+                    <button
+                        className={styles.toolItem}
+                        onClick={() => setIsSettingsOpen(true)}
+                    >
+                        <div className={styles.toolIcon} style={{ background: 'rgba(148, 163, 184, 0.1)', color: '#94a3b8' }}>
+                            <Settings size={16} />
+                        </div>
+                        <div className={styles.toolLabel}>
+                            <span className={styles.toolName}>Ayarlar</span>
+                            <span className={styles.toolDesc}>Tema, izinler, dosya</span>
+                        </div>
+                    </button>
                 </div>
 
-                <div className={styles.sidebarFooter}>
-                    <div className={styles.userInfo}>
-                        <div className={styles.userAvatar}>M</div>
-                        <div className={styles.userDetails}>
-                            <span className={styles.userName}>Misafir</span>
-                        </div>
-                    </div>
-                </div>
             </aside>
 
             {/* --- MAIN --- */}
@@ -515,6 +663,29 @@ export default function ChatInterface() {
                     <button type="button" className={`${styles.micButton} ${isListening ? styles.micActive : ''}`} onClick={toggleListening}>
                         {isListening ? <MicOff size={20} /> : <Mic size={20} />}
                     </button>
+                    {appSettings.fileOperations.uploadEnabled && (
+                        <>
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".xlsx,.xls,.csv"
+                                style={{ display: 'none' }}
+                                onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) handleFileUpload(file);
+                                    e.target.value = '';
+                                }}
+                            />
+                            <button
+                                type="button"
+                                className={styles.micButton}
+                                onClick={() => fileInputRef.current?.click()}
+                                title="Dosya Yukle (Excel/CSV)"
+                            >
+                                <Paperclip size={20} />
+                            </button>
+                        </>
+                    )}
                     <input
                         type="text"
                         className={styles.input}
@@ -538,15 +709,17 @@ export default function ChatInterface() {
                 <div className={styles.dashboardList}>
                     {dashboardStats ? (
                         <>
-                            <div className={styles.briefingCard} onClick={handleBriefing}>
-                                <div className={styles.briefingHeader}>
-                                    <div className={styles.briefingIcon}>
-                                        <Zap size={18} fill="white" />
+                            {appSettings.dashboard.showBriefingCard && (
+                                <div className={styles.briefingCard} onClick={handleBriefing}>
+                                    <div className={styles.briefingHeader}>
+                                        <div className={styles.briefingIcon}>
+                                            <Zap size={18} fill="white" />
+                                        </div>
+                                        <span className={styles.briefingTitle}>Gunluk Ozet Al</span>
                                     </div>
-                                    <span className={styles.briefingTitle}>Gunluk Ozet Al</span>
+                                    <div className={styles.briefingDesc}>Yapay zeka ile anlik durum analizi</div>
                                 </div>
-                                <div className={styles.briefingDesc}>Yapay zeka ile anlik durum analizi</div>
-                            </div>
+                            )}
 
                             <div className={styles.dashboardCardSmall} onClick={() => handleCardClick("Tum musterileri listele")}>
                                 <div className={styles.cardHeaderSmall}>
@@ -593,6 +766,15 @@ export default function ChatInterface() {
                     )}
                 </div>
             </aside>
+
+            {/* --- SETTINGS PANEL --- */}
+            {isSettingsOpen && (
+                <SettingsPanel
+                    settings={appSettings}
+                    onSettingsChange={handleSettingsChange}
+                    onClose={() => setIsSettingsOpen(false)}
+                />
+            )}
         </div>
     )
 }

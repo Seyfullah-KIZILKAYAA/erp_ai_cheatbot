@@ -15,8 +15,9 @@
  * - stock_chart: Stok durumu bar chart
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo, createOdoo } from "@/lib/odooClient";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
+import { extractWriteData } from "@/lib/utils/writeHelper";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -28,7 +29,8 @@ type InventoryIntent =
     | "stock_search"
     | "stock_movement"
     | "stock_value"
-    | "stock_chart";
+    | "stock_chart"
+    | "create_product";
 
 const PRODUCT_FIELDS = ["id", "name", "qty_available", "list_price", "default_code"];
 const QUANT_FIELDS = ["id", "product_id", "location_id", "quantity", "reserved_quantity"];
@@ -46,8 +48,13 @@ const MOVE_STATE_LABELS: Record<string, string> = {
 
 const CRITICAL_THRESHOLD = 10;
 
-export async function processInventoryQuery(userQuery: string, history: any[]) {
+export async function processInventoryQuery(userQuery: string, history: any[], writeEnabled: boolean = false) {
     const lower = userQuery.toLowerCase();
+
+    // --- Hard-coded intents for WRITE operations ---
+    if (lower.includes("ürün oluştur") || lower.includes("ürün ekle") || lower.includes("yeni ürün")) {
+        return executeInventoryAction("create_product", userQuery, undefined, writeEnabled);
+    }
 
     // --- Hard-coded intents for common queries ---
     if (lower.includes("tüm ürünleri listele") || lower.includes("ürün listesi")) {
@@ -144,7 +151,7 @@ export async function processInventoryQuery(userQuery: string, history: any[]) {
             else parsed = { intent: "product_list" };
         }
 
-        return executeInventoryAction(parsed.intent || "product_list", userQuery, parsed.search_term);
+        return executeInventoryAction(parsed.intent || "product_list", userQuery, parsed.search_term, writeEnabled);
 
     } catch (error: any) {
         console.error("Inventory Agent Error:", error);
@@ -152,7 +159,7 @@ export async function processInventoryQuery(userQuery: string, history: any[]) {
     }
 }
 
-async function executeInventoryAction(intent: InventoryIntent, userQuery: string, searchTerm?: string) {
+async function executeInventoryAction(intent: InventoryIntent, userQuery: string, searchTerm?: string, writeEnabled: boolean = false) {
     try {
         switch (intent) {
             // ─── Product List ───────────────────────────────────────────
@@ -457,6 +464,52 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                         `- 🔵 Yüksek stok (100+): **${highStock}** ürün`,
                     data: chartData,
                     ui_component: 'chart'
+                };
+            }
+
+            // --- WRITE OPERATIONS ---
+            case "create_product": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** Ürün oluşturmak için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const prodData = await extractWriteData(userQuery, `Kullanıcının mesajından ürün bilgilerini çıkar. JSON formatında döndür.
+Alanlar: name (ürün adı, zorunlu), list_price (satış fiyatı, opsiyonel), default_code (ürün kodu, opsiyonel), type (ürün tipi: "consu" tüketim malı, "product" stoklanan ürün - varsayılan "consu").
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"name": "Laptop HP ProBook", "list_price": 25000, "default_code": "LP-001", "type": "product"}
+Eğer yeterli bilgi yoksa {"name": null} döndür.`);
+
+                if (!prodData || !prodData.name) {
+                    return {
+                        content: "Ürün oluşturmak için en azından ürün adı gerekli.\n\n**Örnek:**\n- \"Yeni ürün ekle: Laptop HP ProBook, 25000 TL, kod: LP-001\"\n- \"Ürün oluştur: Masa Lambası, fiyat 450 TL\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const values: Record<string, any> = { name: prodData.name };
+                if (prodData.list_price) values.list_price = prodData.list_price;
+                if (prodData.default_code) values.default_code = prodData.default_code;
+                if (prodData.type) values.type = prodData.type;
+
+                const newProdId = await createOdoo("product.product", values);
+                const created = await searchReadOdoo("product.product", [["id", "=", newProdId]], PRODUCT_FIELDS, 1);
+
+                return {
+                    content:
+                        `## Ürün Başarıyla Oluşturuldu!\n\n` +
+                        `| Alan | Değer |\n|------|-------|\n` +
+                        `| ID | **${newProdId}** |\n` +
+                        `| Ad | **${prodData.name}** |\n` +
+                        (prodData.default_code ? `| Kod | **${prodData.default_code}** |\n` : '') +
+                        (prodData.list_price ? `| Fiyat | **${Number(prodData.list_price).toLocaleString('tr-TR')} ₺** |\n` : '') +
+                        `\nKayıt Odoo'da başarıyla oluşturuldu.`,
+                    data: created,
+                    ui_component: 'table'
                 };
             }
 

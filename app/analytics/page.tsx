@@ -42,8 +42,19 @@ function formatMoney(val: number | null | undefined): string {
     return val.toFixed(0) + ' TL'
 }
 
+function escapeHtml(text: string): string {
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;')
+}
+
 function markdownToHtml(md: string): string {
-    return md
+    // First escape all HTML to prevent XSS
+    const escaped = escapeHtml(md)
+    return escaped
         .replace(/^### (.+)$/gm, '<h3>$1</h3>')
         .replace(/^## (.+)$/gm, '<h2>$1</h2>')
         .replace(/^# (.+)$/gm, '<h1>$1</h1>')
@@ -140,7 +151,7 @@ export default function AnalyticsPage() {
                         <>
                             <KpiCard icon={<DollarSign size={20} />} label="Toplam Gelir" value={formatMoney(kpi.total_revenue)} color="var(--accent)" />
                             <KpiCard icon={<ShoppingCart size={20} />} label="Siparis Sayisi" value={kpi.total_orders?.toLocaleString('tr-TR') || '-'} color="var(--primary)" />
-                            <KpiCard icon={<Users size={20} />} label="Aktif Musteri" value={kpi.active_customers?.toString() || '-'} color="#8b5cf6" />
+                            <KpiCard icon={<Users size={20} />} label="Aktif Musteri" value={kpi.active_customers?.toString() || '-'} color="var(--sky)" />
                             <KpiCard icon={<AlertTriangle size={20} />} label="Anomali" value={kpi.anomaly_count?.toString() || '0'} color="var(--danger)" />
                             <KpiCard icon={<Activity size={20} />} label="Ort. Siparis" value={formatMoney(kpi.avg_order_value)} color="var(--warning)" />
                         </>

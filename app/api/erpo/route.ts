@@ -24,8 +24,9 @@ export async function GET() {
             kpi: kpiData,
         });
     } catch (error: any) {
+        console.error("ERPO GET Error:", error);
         return NextResponse.json(
-            { connected: false, kpi: null, error: error.message },
+            { connected: false, kpi: null, error: 'Servis baglantisi kurulamadi' },
             { status: 500 }
         );
     }
@@ -55,6 +56,7 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json(report);
     } catch (error: any) {
+        console.error("ERPO POST Error:", error);
         const isConnectionError = error.message?.includes("ECONNREFUSED") ||
             error.message?.includes("fetch failed") ||
             error.message?.includes("timed out") ||
@@ -63,8 +65,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
             {
                 error: isConnectionError
-                    ? "Odoo ERP sistemine bağlanılamıyor. Lütfen Odoo servisinin (localhost:8069) çalıştığından emin olun."
-                    : "Rapor üretilemedi: " + error.message
+                    ? "ERP sistemine baglanamıyor. Lutfen servisin calistigindan emin olun."
+                    : "Rapor uretilemedi. Lutfen tekrar deneyin."
             },
             { status: isConnectionError ? 503 : 500 }
         );

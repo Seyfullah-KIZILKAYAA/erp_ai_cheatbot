@@ -15,8 +15,9 @@
  * - revenue_breakdown: Gelir kırılımı grafiği
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo, createOdoo } from "@/lib/odooClient";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
+import { extractWriteData } from "@/lib/utils/writeHelper";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -29,7 +30,8 @@ type FinanceIntent =
     | "unpaid_invoices"
     | "overdue_analysis"
     | "payment_status"
-    | "revenue_breakdown";
+    | "revenue_breakdown"
+    | "create_invoice";
 
 const INVOICE_FIELDS = ["id", "name", "partner_id", "amount_total", "payment_state", "state", "invoice_date"];
 const PAYMENT_FIELDS = ["id", "name", "partner_id", "amount", "payment_type", "date", "state"];
@@ -42,8 +44,13 @@ const PAYMENT_STATE_LABELS: Record<string, string> = {
     reversed: "İptal Edildi"
 };
 
-export async function processFinanceQuery(userQuery: string, history: any[]) {
+export async function processFinanceQuery(userQuery: string, history: any[], writeEnabled: boolean = false) {
     const lower = userQuery.toLowerCase();
+
+    // --- Hard-coded intents for WRITE operations ---
+    if (lower.includes("fatura oluştur") || lower.includes("fatura ekle") || lower.includes("yeni fatura")) {
+        return executeFinanceAction("create_invoice", userQuery, writeEnabled);
+    }
 
     // --- Hard-coded intents ---
     if (lower.includes("fatura listesi") || lower.includes("faturaları listele") || lower.includes("tüm faturaları")) {
@@ -135,7 +142,7 @@ export async function processFinanceQuery(userQuery: string, history: any[]) {
             else parsed = { intent: "invoice_summary" };
         }
 
-        return executeFinanceAction(parsed.intent || "invoice_summary", userQuery);
+        return executeFinanceAction(parsed.intent || "invoice_summary", userQuery, writeEnabled);
 
     } catch (error: any) {
         console.error("Finance Agent Error:", error);
@@ -143,7 +150,7 @@ export async function processFinanceQuery(userQuery: string, history: any[]) {
     }
 }
 
-async function executeFinanceAction(intent: FinanceIntent, userQuery: string) {
+async function executeFinanceAction(intent: FinanceIntent, userQuery: string, writeEnabled: boolean = false) {
     try {
         switch (intent) {
             case "invoice_list": {
@@ -333,6 +340,59 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string) {
                     content: `## 📊 Gelir Kırılımı (Top 10)\n\nEn yüksek fatura hacmi: **${chartData[0]?.name}** (**${chartData[0]?.tutar.toLocaleString('tr-TR')} ₺**)`,
                     data: chartData,
                     ui_component: 'chart'
+                };
+            }
+
+            // --- WRITE OPERATIONS ---
+            case "create_invoice": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** Fatura oluşturmak için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const invoiceData = await extractWriteData(userQuery, `Kullanıcının mesajından fatura bilgilerini çıkar. JSON formatında döndür.
+Alanlar: partner_name (müşteri adı, zorunlu), amount (tutar, opsiyonel).
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"partner_name": "Acme Ltd", "amount": 5000}
+Eğer müşteri adı bulunamadıysa {"partner_name": null} döndür.`);
+
+                if (!invoiceData || !invoiceData.partner_name) {
+                    return {
+                        content: "Fatura oluşturmak için müşteri adı gerekli.\n\n**Örnek:**\n- \"Acme Ltd için yeni fatura oluştur\"\n- \"Test Şirketi adına 5000 TL fatura ekle\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const partners = await searchReadOdoo("res.partner", [["name", "ilike", invoiceData.partner_name]], ["id", "name"], 1);
+                if (!partners?.length) {
+                    return {
+                        content: `"${invoiceData.partner_name}" adında müşteri bulunamadı. Önce müşteri oluşturun.`,
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const newInvoiceId = await createOdoo("account.move", {
+                    partner_id: partners[0].id,
+                    move_type: "out_invoice"
+                });
+
+                const created = await searchReadOdoo("account.move", [["id", "=", newInvoiceId]], INVOICE_FIELDS, 1);
+
+                return {
+                    content:
+                        `## Fatura Oluşturuldu!\n\n` +
+                        `| Alan | Değer |\n|------|-------|\n` +
+                        `| Fatura No | **${created[0]?.name || newInvoiceId}** |\n` +
+                        `| Müşteri | **${partners[0].name}** |\n` +
+                        `| Durum | **Taslak** |\n\n` +
+                        `Fatura taslak olarak oluşturuldu. Kalem satırları Odoo'dan eklenebilir.`,
+                    data: created,
+                    ui_component: 'table'
                 };
             }
 

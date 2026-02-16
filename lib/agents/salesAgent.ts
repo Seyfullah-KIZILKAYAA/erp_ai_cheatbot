@@ -16,7 +16,7 @@
  * - revenue_chart: Gelir dağılımı grafiği
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo, createOdoo, writeOdoo } from "@/lib/odooClient";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
@@ -30,7 +30,10 @@ type SalesIntent =
     | "quotation_list"
     | "top_orders"
     | "order_status"
-    | "revenue_chart";
+    | "revenue_chart"
+    | "create_customer"
+    | "create_order"
+    | "confirm_order";
 
 const SALE_ORDER_FIELDS = ["id", "name", "partner_id", "amount_total", "state", "date_order"];
 const PARTNER_FIELDS = ["id", "name", "email", "phone", "city", "is_company"];
@@ -43,10 +46,21 @@ const STATE_LABELS: Record<string, string> = {
     cancel: "İptal"
 };
 
-export async function processSalesQuery(userQuery: string, history: any[]) {
+export async function processSalesQuery(userQuery: string, history: any[], writeEnabled: boolean = false) {
     const lower = userQuery.toLowerCase();
 
-    // --- Hard-coded intents for common queries ---
+    // --- Hard-coded intents for WRITE operations ---
+    if (lower.includes("müşteri oluştur") || lower.includes("müşteri ekle") || lower.includes("yeni müşteri")) {
+        return executeSalesAction("create_customer", userQuery, undefined, writeEnabled);
+    }
+    if (lower.includes("sipariş oluştur") || lower.includes("sipariş ekle") || lower.includes("yeni sipariş")) {
+        return executeSalesAction("create_order", userQuery, undefined, writeEnabled);
+    }
+    if (lower.includes("sipariş onayla") || lower.includes("siparişi onayla")) {
+        return executeSalesAction("confirm_order", userQuery, undefined, writeEnabled);
+    }
+
+    // --- Hard-coded intents for common READ queries ---
     if (lower.includes("tüm müşterileri listele") || lower.includes("müşteri listesi")) {
         return executeSalesAction("customer_list", userQuery);
     }
@@ -149,7 +163,7 @@ export async function processSalesQuery(userQuery: string, history: any[]) {
             else parsed = { intent: "order_list" };
         }
 
-        return executeSalesAction(parsed.intent || "order_list", userQuery, parsed.search_term);
+        return executeSalesAction(parsed.intent || "order_list", userQuery, parsed.search_term, writeEnabled);
 
     } catch (error: any) {
         console.error("Sales Agent Error:", error);
@@ -157,7 +171,62 @@ export async function processSalesQuery(userQuery: string, history: any[]) {
     }
 }
 
-async function executeSalesAction(intent: SalesIntent, userQuery: string, searchTerm?: string) {
+/**
+ * Extract structured data from natural language query for write operations.
+ * Uses LLM to parse customer/order details from free-form text.
+ */
+async function extractWriteDataFromQuery(query: string, type: "customer" | "order"): Promise<any> {
+    const prompts: Record<string, string> = {
+        customer: `Kullanıcının mesajından müşteri bilgilerini çıkar. JSON formatında döndür.
+Alanlar: name (zorunlu), email, phone, city, is_company (boolean).
+Eğer "ltd", "a.ş.", "şirket" gibi ifadeler varsa is_company=true yap.
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"name": "Acme Ltd", "city": "İstanbul", "is_company": true}
+Eğer yeterli bilgi yoksa {"name": null} döndür.`,
+        order: `Kullanıcının mesajından sipariş bilgilerini çıkar. JSON formatında döndür.
+Alanlar: partner_name (müşteri adı, zorunlu).
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"partner_name": "Acme Ltd"}
+Eğer müşteri adı bulunamadıysa {"partner_name": null} döndür.`
+    };
+
+    try {
+        const response = await withRetry(
+            () => withTimeout(
+                () => fetch(GROQ_API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${GROQ_API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "llama-3.3-70b-versatile",
+                        messages: [
+                            { role: "system", content: prompts[type] },
+                            { role: "user", content: query }
+                        ],
+                        temperature: 0.1,
+                        max_tokens: 200,
+                        response_format: { type: "json_object" }
+                    })
+                }),
+                8000,
+                'Write data extraction timed out'
+            ),
+            { maxRetries: 1, baseDelay: 500 }
+        );
+
+        if (!response.ok) return null;
+
+        const data = await response.json();
+        const raw = data.choices[0]?.message?.content || "{}";
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+async function executeSalesAction(intent: SalesIntent, userQuery: string, searchTerm?: string, writeEnabled: boolean = false) {
     try {
         switch (intent) {
             case "order_list": {
@@ -407,6 +476,131 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
                         `(**${chartData[0]?.gelir.toLocaleString('tr-TR')} ₺**)`,
                     data: chartData,
                     ui_component: 'chart'
+                };
+            }
+
+            // --- WRITE OPERATIONS ---
+            case "create_customer": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** Müşteri oluşturmak için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                // Extract customer info from query using LLM
+                const customerData = await extractWriteDataFromQuery(userQuery, "customer");
+                if (!customerData || !customerData.name) {
+                    return {
+                        content: "Müşteri oluşturmak için en azından bir isim gerekli.\n\n**Örnek kullanım:**\n- \"Yeni müşteri oluştur: Acme Ltd, İstanbul, info@acme.com\"\n- \"Müşteri ekle: Ahmet Yılmaz, telefon 05551234567\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const newCustomerId = await createOdoo("res.partner", customerData);
+                const createdCustomer = await searchReadOdoo("res.partner", [["id", "=", newCustomerId]], PARTNER_FIELDS, 1);
+
+                return {
+                    content:
+                        `## Müşteri Başarıyla Oluşturuldu!\n\n` +
+                        `| Alan | Değer |\n|------|-------|\n` +
+                        `| ID | **${newCustomerId}** |\n` +
+                        `| Ad | **${customerData.name}** |\n` +
+                        (customerData.email ? `| Email | **${customerData.email}** |\n` : '') +
+                        (customerData.phone ? `| Telefon | **${customerData.phone}** |\n` : '') +
+                        (customerData.city ? `| Şehir | **${customerData.city}** |\n` : '') +
+                        `\nKayıt Odoo'da başarıyla oluşturuldu.`,
+                    data: createdCustomer,
+                    ui_component: 'table'
+                };
+            }
+
+            case "create_order": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** Sipariş oluşturmak için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                // Find customer from query
+                const orderInfo = await extractWriteDataFromQuery(userQuery, "order");
+                if (!orderInfo || !orderInfo.partner_name) {
+                    return {
+                        content: "Sipariş oluşturmak için müşteri adı gerekli.\n\n**Örnek kullanım:**\n- \"Acme Ltd için yeni sipariş oluştur\"\n- \"Ahmet Yılmaz adına sipariş ekle\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                // Search for the customer
+                const partners = await searchReadOdoo("res.partner", [["name", "ilike", orderInfo.partner_name]], ["id", "name"], 1);
+                if (!partners?.length) {
+                    return {
+                        content: `"${orderInfo.partner_name}" adında müşteri bulunamadı. Önce müşteri oluşturun.\n\n**Örnek:** "Yeni müşteri oluştur: ${orderInfo.partner_name}"`,
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const partnerId = partners[0].id;
+                const newOrderId = await createOdoo("sale.order", { partner_id: partnerId });
+                const createdOrder = await searchReadOdoo("sale.order", [["id", "=", newOrderId]], SALE_ORDER_FIELDS, 1);
+
+                return {
+                    content:
+                        `## Satış Siparişi Oluşturuldu!\n\n` +
+                        `| Alan | Değer |\n|------|-------|\n` +
+                        `| Sipariş No | **${createdOrder[0]?.name || newOrderId}** |\n` +
+                        `| Müşteri | **${partners[0].name}** |\n` +
+                        `| Durum | **Taslak** |\n\n` +
+                        `Sipariş taslak olarak oluşturuldu. Ürün satırları Odoo'dan eklenebilir.`,
+                    data: createdOrder,
+                    ui_component: 'table'
+                };
+            }
+
+            case "confirm_order": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** Sipariş onaylamak için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                // Find order to confirm
+                const orderName = searchTerm || userQuery.match(/S\d+/i)?.[0];
+                if (!orderName) {
+                    return {
+                        content: "Onaylanacak sipariş numarasını belirtin.\n\n**Örnek:** \"S00001 siparişini onayla\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const orders = await searchReadOdoo("sale.order", [["name", "ilike", orderName], ["state", "=", "draft"]], SALE_ORDER_FIELDS, 1);
+                if (!orders?.length) {
+                    return {
+                        content: `"${orderName}" numaralı taslak sipariş bulunamadı.`,
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                await writeOdoo("sale.order", [orders[0].id], { state: "sale" });
+
+                return {
+                    content:
+                        `## Sipariş Onaylandı!\n\n` +
+                        `**${orders[0].name}** siparişi başarıyla onaylandı.\n` +
+                        `Müşteri: **${Array.isArray(orders[0].partner_id) ? orders[0].partner_id[1] : orders[0].partner_id}**\n` +
+                        `Tutar: **${Number(orders[0].amount_total).toLocaleString('tr-TR')} ₺**`,
+                    data: null,
+                    ui_component: null
                 };
             }
 

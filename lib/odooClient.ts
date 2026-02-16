@@ -6,10 +6,21 @@ const ODOO_DB = process.env.ODOO_DB;
 const ODOO_USERNAME = process.env.ODOO_USERNAME;
 const ODOO_PASSWORD = process.env.ODOO_PASSWORD;
 
+function validateOdooEnv() {
+    const missing: string[] = [];
+    if (!ODOO_URL) missing.push('ODOO_URL');
+    if (!ODOO_DB) missing.push('ODOO_DB');
+    if (!ODOO_USERNAME) missing.push('ODOO_USERNAME');
+    if (!ODOO_PASSWORD) missing.push('ODOO_PASSWORD');
+    if (missing.length > 0) {
+        throw new Error(`Missing required Odoo env vars: ${missing.join(', ')}`);
+    }
+}
+
 // Helper to determine if we need secure client (https) or not (http)
 const getClient = (path: string) => {
-    if (!ODOO_URL) throw new Error("ODOO_URL is not defined");
-    const url = new URL(ODOO_URL);
+    validateOdooEnv();
+    const url = new URL(ODOO_URL!);
     const createClient = url.protocol === 'https:' ? xmlrpc.createSecureClient : xmlrpc.createClient;
 
     return createClient({
@@ -70,6 +81,70 @@ export const searchReadOdoo = async (model: string, query: any[] = [], fields: s
         );
     } catch (error) {
         console.error("Odoo Error:", error);
+        throw error;
+    }
+};
+
+// Create a new record in Odoo
+export const createOdoo = async (model: string, values: Record<string, any>): Promise<number> => {
+    try {
+        const uid = await authenticate();
+        const client = getClient('/xmlrpc/2/object');
+
+        return withTimeout(
+            () => new Promise<number>((resolve, reject) => {
+                client.methodCall('execute_kw', [
+                    ODOO_DB,
+                    uid,
+                    ODOO_PASSWORD,
+                    model,
+                    'create',
+                    [values]
+                ], (error, value) => {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        resolve(value as number);
+                    }
+                });
+            }),
+            10000,
+            'Odoo create operation timed out'
+        );
+    } catch (error) {
+        console.error("Odoo Create Error:", error);
+        throw error;
+    }
+};
+
+// Update existing record(s) in Odoo
+export const writeOdoo = async (model: string, ids: number[], values: Record<string, any>): Promise<boolean> => {
+    try {
+        const uid = await authenticate();
+        const client = getClient('/xmlrpc/2/object');
+
+        return withTimeout(
+            () => new Promise<boolean>((resolve, reject) => {
+                client.methodCall('execute_kw', [
+                    ODOO_DB,
+                    uid,
+                    ODOO_PASSWORD,
+                    model,
+                    'write',
+                    [ids, values]
+                ], (error, value) => {
+                    if (error) {
+                        reject(error);
+                    } else {
+                        resolve(value as boolean);
+                    }
+                });
+            }),
+            10000,
+            'Odoo write operation timed out'
+        );
+    } catch (error) {
+        console.error("Odoo Write Error:", error);
         throw error;
     }
 };

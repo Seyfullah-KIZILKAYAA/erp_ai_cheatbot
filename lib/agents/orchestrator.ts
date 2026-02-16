@@ -8,6 +8,10 @@
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
+if (!GROQ_API_KEY) {
+    console.error('CRITICAL: GROQ_API_KEY is not set. AI features will not work.');
+}
+
 export interface AgentRoute {
     agents: ('sales' | 'finance' | 'inventory' | 'purchasing' | 'hr' | 'crm' | 'analytics')[];
     confidence: number;

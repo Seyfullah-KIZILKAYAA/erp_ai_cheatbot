@@ -46,6 +46,53 @@
   --chat-bubble-bot: var(--bot-bubble);
 }
 
+/* Light Theme */
+[data-theme="light"] {
+  --background: #f5f7fb;
+  --foreground: #1a1d2e;
+
+  --surface-1: #ffffff;
+  --surface-2: #eef1f8;
+  --surface-3: #e2e6f0;
+  --surface-4: #d5dae8;
+
+  --border: rgba(0, 0, 0, 0.08);
+  --border-hover: rgba(0, 0, 0, 0.15);
+
+  --text-primary: #1a1d2e;
+  --text-secondary: #5a6178;
+  --text-tertiary: #8890a8;
+
+  --primary: #4a6cf7;
+  --primary-hover: #3b5de8;
+  --primary-glow: rgba(74, 108, 247, 0.12);
+  --primary-soft: rgba(74, 108, 247, 0.06);
+
+  --accent: #10b981;
+  --coral: #ef4444;
+  --amber: #f59e0b;
+  --sky: #0ea5e9;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+
+  --user-bubble: linear-gradient(135deg, #4a6cf7 0%, #3b5de8 100%);
+  --user-bubble-solid: #4a6cf7;
+  --bot-bubble: #eef1f8;
+
+  --card-bg: var(--surface-1);
+  --glass-border: var(--border);
+  --secondary: var(--surface-2);
+  --chat-bubble-user: var(--user-bubble-solid);
+  --chat-bubble-bot: var(--bot-bubble);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
 * {
   box-sizing: border-box;
   padding: 0;

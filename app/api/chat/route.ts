@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { NextResponse } from "next/server";
+import { checkRateLimit } from "@/lib/utils/rateLimiter";
 import { routeToAgent } from "@/lib/agents/orchestrator";
 import { processSalesQuery } from "@/lib/agents/salesAgent";
 import { processFinanceQuery } from "@/lib/agents/financeAgent";
@@ -55,9 +56,33 @@ function extractEntitiesFromResponse(agentResponse: any, agentKey: string, sessi
     });
 }
 
+const MAX_MESSAGE_LENGTH = 5000;
+const MAX_HISTORY_LENGTH = 100;
+
 export async function POST(req: Request) {
     try {
-        const { message, history, userContext, sessionId } = await req.json();
+        // Rate limiting (20 requests per minute per session)
+        const clientIp = req.headers.get('x-forwarded-for') || 'anonymous';
+        const rateCheck = checkRateLimit(clientIp, 20, 60_000);
+        if (!rateCheck.allowed) {
+            return NextResponse.json(
+                { role: "bot", content: "Cok fazla istek gonderdiniz. Lutfen biraz bekleyin." },
+                { status: 429 }
+            );
+        }
+
+        const body = await req.json();
+        const { message, history, userContext, sessionId, writeEnabled } = body;
+        const isWriteEnabled = writeEnabled === true;
+
+        // Input validation
+        if (!message || typeof message !== 'string' || message.trim().length === 0) {
+            return NextResponse.json({ role: "bot", content: "Lutfen bir mesaj girin." }, { status: 400 });
+        }
+        if (message.length > MAX_MESSAGE_LENGTH) {
+            return NextResponse.json({ role: "bot", content: `Mesaj cok uzun. Maksimum ${MAX_MESSAGE_LENGTH} karakter.` }, { status: 400 });
+        }
+        const safeHistory = Array.isArray(history) ? history.slice(-MAX_HISTORY_LENGTH) : [];
 
         const username = userContext?.username || 'Kullanıcı';
         const activeSessionId = sessionId || 'default';
@@ -105,7 +130,7 @@ export async function POST(req: Request) {
                 analysis: "Önceden tanımlı iş komutu algılandı, ilgili departmanlar doğrudan görevlendirildi.",
                 reasoning: "Kullanıcı spesifik bir sistem komutu kullandı."
             }
-            : await routeToAgent(message, history);
+            : await routeToAgent(message, safeHistory);
 
         console.log(`🧠 [ORCHESTRATOR] Routing decision:`, route);
 
@@ -127,35 +152,34 @@ export async function POST(req: Request) {
         const settledResults = await Promise.allSettled(
             uniqueAgents.map(async (agentKey) => {
                 const key = agentKey.toLowerCase();
-                // ... (rest of the mapping code stays same)
                 if (key === 'finance') {
                     const name = '💰 Finance Agent';
-                    console.log(`💰 [FINANCE AGENT] Processing query...`);
-                    const res = await processFinanceQuery(messageWithContext, history);
+                    console.log(`💰 [FINANCE AGENT] Processing query... (writeEnabled: ${isWriteEnabled})`);
+                    const res = await processFinanceQuery(messageWithContext, history, isWriteEnabled);
                     return { key, name, ...res };
                 }
                 if (key === 'inventory') {
                     const name = '📦 Inventory Agent';
-                    console.log(`📦 [INVENTORY AGENT] Processing query...`);
-                    const res = await processInventoryQuery(messageWithContext, history);
+                    console.log(`📦 [INVENTORY AGENT] Processing query... (writeEnabled: ${isWriteEnabled})`);
+                    const res = await processInventoryQuery(messageWithContext, history, isWriteEnabled);
                     return { key, name, ...res };
                 }
                 if (key === 'purchasing' || key === 'purchase') {
                     const name = '🧾 Purchasing Agent';
-                    console.log(`🧾 [PURCHASING AGENT] Processing query...`);
-                    const res = await processPurchasingQuery(messageWithContext, history);
+                    console.log(`🧾 [PURCHASING AGENT] Processing query... (writeEnabled: ${isWriteEnabled})`);
+                    const res = await processPurchasingQuery(messageWithContext, history, isWriteEnabled);
                     return { key, name, ...res };
                 }
                 if (key === 'hr' || key === 'human_resources') {
                     const name = '👥 HR Agent';
-                    console.log(`👥 [HR AGENT] Processing query...`);
-                    const res = await processHrQuery(messageWithContext, history);
+                    console.log(`👥 [HR AGENT] Processing query... (writeEnabled: ${isWriteEnabled})`);
+                    const res = await processHrQuery(messageWithContext, history, isWriteEnabled);
                     return { key, name, ...res };
                 }
                 if (key === 'crm') {
                     const name = '📈 CRM Agent';
-                    console.log(`📈 [CRM AGENT] Processing query...`);
-                    const res = await processCrmQuery(messageWithContext, history);
+                    console.log(`📈 [CRM AGENT] Processing query... (writeEnabled: ${isWriteEnabled})`);
+                    const res = await processCrmQuery(messageWithContext, history, isWriteEnabled);
                     return { key, name, ...res };
                 }
                 if (key === 'analytics') {
@@ -164,9 +188,10 @@ export async function POST(req: Request) {
                     const res = await processAnalyticsQuery(messageWithContext, history);
                     return { key, name, ...res };
                 }
+                // Default: Sales Agent (with write support)
                 const name = '💼 Sales Agent';
-                console.log(`💼 [SALES AGENT] Processing query...`);
-                const res = await processSalesQuery(messageWithContext, history);
+                console.log(`💼 [SALES AGENT] Processing query... (writeEnabled: ${isWriteEnabled})`);
+                const res = await processSalesQuery(messageWithContext, history, isWriteEnabled);
                 return { key, name, ...res };
             })
         );
@@ -238,9 +263,12 @@ export async function POST(req: Request) {
 
     } catch (error: any) {
         console.error("❌ [API ERROR]:", error);
+        const safeMessage = process.env.NODE_ENV === 'development'
+            ? `Bir hata oluştu: ${error.message}`
+            : 'Bir hata oluştu. Lütfen daha sonra tekrar deneyin.';
         return NextResponse.json({
             role: "bot",
-            content: "Bir hata oluştu: " + error.message
-        });
+            content: safeMessage
+        }, { status: 500 });
     }
 }

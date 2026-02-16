@@ -13,8 +13,9 @@
  * - position_analysis: Pozisyon bazlı analiz
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo, createOdoo } from "@/lib/odooClient";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
+import { extractWriteData } from "@/lib/utils/writeHelper";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -25,12 +26,18 @@ type HrIntent =
     | "employee_search"
     | "department_breakdown"
     | "headcount"
-    | "position_analysis";
+    | "position_analysis"
+    | "create_employee";
 
 const EMPLOYEE_FIELDS = ["id", "name", "work_email", "mobile_phone", "department_id", "job_title"];
 
-export async function processHrQuery(userQuery: string, history: any[]) {
+export async function processHrQuery(userQuery: string, history: any[], writeEnabled: boolean = false) {
     const lower = userQuery.toLowerCase();
+
+    // --- Hard-coded intents for WRITE operations ---
+    if (lower.includes("personel oluştur") || lower.includes("personel ekle") || lower.includes("çalışan oluştur") || lower.includes("çalışan ekle") || lower.includes("yeni personel") || lower.includes("yeni çalışan")) {
+        return executeHrAction("create_employee", userQuery, undefined, writeEnabled);
+    }
 
     // --- Hard-coded intents ---
     if (lower.includes("tüm çalışanları listele") || lower.includes("çalışan listesi") || lower.includes("personel listesi")) {
@@ -114,7 +121,7 @@ export async function processHrQuery(userQuery: string, history: any[]) {
             else parsed = { intent: "employee_summary" };
         }
 
-        return executeHrAction(parsed.intent || "employee_summary", userQuery, parsed.search_term);
+        return executeHrAction(parsed.intent || "employee_summary", userQuery, parsed.search_term, writeEnabled);
 
     } catch (error: any) {
         console.error("HR Agent Error:", error);
@@ -122,7 +129,7 @@ export async function processHrQuery(userQuery: string, history: any[]) {
     }
 }
 
-async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?: string) {
+async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?: string, writeEnabled: boolean = false) {
     try {
         switch (intent) {
             case "employee_list": {
@@ -295,6 +302,62 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
                         chartData.slice(0, 5).map(d => `- **${d.name}**: ${d.calisan_sayisi} çalışan`).join('\n'),
                     data: chartData,
                     ui_component: 'chart'
+                };
+            }
+
+            // --- WRITE OPERATIONS ---
+            case "create_employee": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** Personel oluşturmak için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const empData = await extractWriteData(userQuery, `Kullanıcının mesajından çalışan/personel bilgilerini çıkar. JSON formatında döndür.
+Alanlar: name (zorunlu), work_email, mobile_phone, department_name, job_title.
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"name": "Ahmet Yılmaz", "work_email": "ahmet@test.com", "job_title": "Yönetici"}
+Eğer yeterli bilgi yoksa {"name": null} döndür.`);
+
+                if (!empData || !empData.name) {
+                    return {
+                        content: "Personel oluşturmak için en azından isim gerekli.\n\n**Örnek:**\n- \"Yeni personel ekle: Ahmet Yılmaz, ahmet@test.com, Yönetici\"\n- \"Çalışan oluştur: Ayşe Demir, IT departmanı, Yazılım Geliştirici\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                // Build Odoo values
+                const values: Record<string, any> = { name: empData.name };
+                if (empData.work_email) values.work_email = empData.work_email;
+                if (empData.mobile_phone) values.mobile_phone = empData.mobile_phone;
+                if (empData.job_title) values.job_title = empData.job_title;
+
+                // If department_name provided, search for it
+                if (empData.department_name) {
+                    const depts = await searchReadOdoo("hr.department", [["name", "ilike", empData.department_name]], ["id", "name"], 1);
+                    if (depts?.length) {
+                        values.department_id = depts[0].id;
+                    }
+                }
+
+                const newEmpId = await createOdoo("hr.employee", values);
+                const created = await searchReadOdoo("hr.employee", [["id", "=", newEmpId]], EMPLOYEE_FIELDS, 1);
+
+                return {
+                    content:
+                        `## Personel Başarıyla Oluşturuldu!\n\n` +
+                        `| Alan | Değer |\n|------|-------|\n` +
+                        `| ID | **${newEmpId}** |\n` +
+                        `| Ad | **${empData.name}** |\n` +
+                        (empData.work_email ? `| Email | **${empData.work_email}** |\n` : '') +
+                        (empData.job_title ? `| Pozisyon | **${empData.job_title}** |\n` : '') +
+                        (empData.department_name ? `| Departman | **${empData.department_name}** |\n` : '') +
+                        `\nKayıt Odoo'da başarıyla oluşturuldu.`,
+                    data: created,
+                    ui_component: 'table'
                 };
             }
 

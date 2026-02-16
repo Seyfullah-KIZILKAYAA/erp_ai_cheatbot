@@ -15,8 +15,9 @@
  * - top_purchases: En yüksek tutarlı satın almalar
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo, createOdoo } from "@/lib/odooClient";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
+import { extractWriteData } from "@/lib/utils/writeHelper";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -29,7 +30,8 @@ type PurchasingIntent =
     | "vendor_search"
     | "top_vendors"
     | "po_status"
-    | "top_purchases";
+    | "top_purchases"
+    | "create_purchase";
 
 const PO_FIELDS = ["id", "name", "partner_id", "amount_total", "state", "date_order"];
 const VENDOR_FIELDS = ["id", "name", "email", "phone", "city", "is_company"];
@@ -43,8 +45,13 @@ const PO_STATE_LABELS: Record<string, string> = {
     cancel: "İptal"
 };
 
-export async function processPurchasingQuery(userQuery: string, history: any[]) {
+export async function processPurchasingQuery(userQuery: string, history: any[], writeEnabled: boolean = false) {
     const lower = userQuery.toLowerCase();
+
+    // --- Hard-coded intents for WRITE operations ---
+    if (lower.includes("satın alma oluştur") || lower.includes("satın alma ekle") || lower.includes("yeni satın alma") || lower.includes("po oluştur")) {
+        return executePurchasingAction("create_purchase", userQuery, undefined, writeEnabled);
+    }
 
     // --- Hard-coded intents ---
     if (lower.includes("satın alma siparişlerini listele") || lower.includes("po listesi") || lower.includes("tüm satın almaları")) {
@@ -133,7 +140,7 @@ export async function processPurchasingQuery(userQuery: string, history: any[]) 
             else parsed = { intent: "po_list" };
         }
 
-        return executePurchasingAction(parsed.intent || "po_list", userQuery, parsed.search_term);
+        return executePurchasingAction(parsed.intent || "po_list", userQuery, parsed.search_term, writeEnabled);
 
     } catch (error: any) {
         console.error("Purchasing Agent Error:", error);
@@ -141,7 +148,7 @@ export async function processPurchasingQuery(userQuery: string, history: any[]) 
     }
 }
 
-async function executePurchasingAction(intent: PurchasingIntent, userQuery: string, searchTerm?: string) {
+async function executePurchasingAction(intent: PurchasingIntent, userQuery: string, searchTerm?: string, writeEnabled: boolean = false) {
     try {
         switch (intent) {
             case "po_list": {
@@ -370,6 +377,55 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
                         `En büyük alım: **${data[0].name}** — ` +
                         `**${Number(data[0].amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**`,
                     data: tableData,
+                    ui_component: 'table'
+                };
+            }
+
+            // --- WRITE OPERATIONS ---
+            case "create_purchase": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** Satın alma siparişi oluşturmak için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const poData = await extractWriteData(userQuery, `Kullanıcının mesajından satın alma siparişi bilgilerini çıkar. JSON formatında döndür.
+Alanlar: partner_name (tedarikçi adı, zorunlu).
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"partner_name": "ABC Tedarik Ltd"}
+Eğer tedarikçi adı bulunamadıysa {"partner_name": null} döndür.`);
+
+                if (!poData || !poData.partner_name) {
+                    return {
+                        content: "Satın alma siparişi için tedarikçi adı gerekli.\n\n**Örnek:**\n- \"ABC Tedarik için yeni satın alma oluştur\"\n- \"XYZ Ltd adına satın alma ekle\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const vendors = await searchReadOdoo("res.partner", [["name", "ilike", poData.partner_name], ["is_company", "=", true]], ["id", "name"], 1);
+                if (!vendors?.length) {
+                    return {
+                        content: `"${poData.partner_name}" adında tedarikçi bulunamadı. Önce tedarikçi kaydı oluşturun.`,
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const newPoId = await createOdoo("purchase.order", { partner_id: vendors[0].id });
+                const created = await searchReadOdoo("purchase.order", [["id", "=", newPoId]], PO_FIELDS, 1);
+
+                return {
+                    content:
+                        `## Satın Alma Siparişi Oluşturuldu!\n\n` +
+                        `| Alan | Değer |\n|------|-------|\n` +
+                        `| Sipariş No | **${created[0]?.name || newPoId}** |\n` +
+                        `| Tedarikçi | **${vendors[0].name}** |\n` +
+                        `| Durum | **Taslak (RFQ)** |\n\n` +
+                        `Sipariş taslak olarak oluşturuldu. Ürün satırları Odoo'dan eklenebilir.`,
+                    data: created,
                     ui_component: 'table'
                 };
             }

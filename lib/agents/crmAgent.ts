@@ -14,8 +14,9 @@
  * - stage_analysis: Aşama bazlı analiz (chart)
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchReadOdoo, countOdoo, createOdoo } from "@/lib/odooClient";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
+import { extractWriteData } from "@/lib/utils/writeHelper";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -27,12 +28,18 @@ type CrmIntent =
     | "won_opportunities"
     | "pipeline_chart"
     | "revenue_forecast"
-    | "stage_analysis";
+    | "stage_analysis"
+    | "create_lead";
 
 const LEAD_FIELDS = ["id", "name", "partner_id", "stage_id", "probability", "expected_revenue"];
 
-export async function processCrmQuery(userQuery: string, history: any[]) {
+export async function processCrmQuery(userQuery: string, history: any[], writeEnabled: boolean = false) {
     const lower = userQuery.toLowerCase();
+
+    // --- Hard-coded intents for WRITE operations ---
+    if (lower.includes("fırsat oluştur") || lower.includes("fırsat ekle") || lower.includes("yeni fırsat") || lower.includes("lead oluştur") || lower.includes("lead ekle")) {
+        return executeCrmAction("create_lead", userQuery, writeEnabled);
+    }
 
     // --- Hard-coded intents ---
     if (lower.includes("açık crm fırsatlarını") || lower.includes("açık fırsatları") || lower.includes("aktif fırsatlar")) {
@@ -120,7 +127,7 @@ export async function processCrmQuery(userQuery: string, history: any[]) {
             else parsed = { intent: "opportunity_summary" };
         }
 
-        return executeCrmAction(parsed.intent || "opportunity_summary", userQuery);
+        return executeCrmAction(parsed.intent || "opportunity_summary", userQuery, writeEnabled);
 
     } catch (error: any) {
         console.error("CRM Agent Error:", error);
@@ -128,7 +135,7 @@ export async function processCrmQuery(userQuery: string, history: any[]) {
     }
 }
 
-async function executeCrmAction(intent: CrmIntent, userQuery: string) {
+async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabled: boolean = false) {
     try {
         switch (intent) {
             case "opportunity_list": {
@@ -345,6 +352,55 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string) {
                         `Ağırlıklı gelir = beklenen gelir x olasılık oranı`,
                     data: chartData,
                     ui_component: 'chart'
+                };
+            }
+
+            // --- WRITE OPERATIONS ---
+            case "create_lead": {
+                if (!writeEnabled) {
+                    return {
+                        content: "**Yazma izni kapalı.** CRM fırsatı oluşturmak için Ayarlar panelinden **Yazma İşlevi** seçeneğini aktif edin.",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const leadData = await extractWriteData(userQuery, `Kullanıcının mesajından CRM fırsat/lead bilgilerini çıkar. JSON formatında döndür.
+Alanlar: name (fırsat adı, zorunlu), partner_name (müşteri adı, opsiyonel), expected_revenue (beklenen gelir, opsiyonel).
+Sadece JSON döndür, başka bir şey yazma.
+Örnek: {"name": "Yeni Proje Teklifi", "partner_name": "Acme Ltd", "expected_revenue": 50000}
+Eğer yeterli bilgi yoksa {"name": null} döndür.`);
+
+                if (!leadData || !leadData.name) {
+                    return {
+                        content: "CRM fırsatı oluşturmak için fırsat adı gerekli.\n\n**Örnek:**\n- \"Yeni fırsat oluştur: Acme Ltd Web Projesi, 50000 TL\"\n- \"Lead ekle: Yazılım Danışmanlık Teklifi\"",
+                        data: null,
+                        ui_component: null
+                    };
+                }
+
+                const values: Record<string, any> = { name: leadData.name };
+                if (leadData.expected_revenue) values.expected_revenue = leadData.expected_revenue;
+
+                if (leadData.partner_name) {
+                    const partners = await searchReadOdoo("res.partner", [["name", "ilike", leadData.partner_name]], ["id"], 1);
+                    if (partners?.length) values.partner_id = partners[0].id;
+                }
+
+                const newLeadId = await createOdoo("crm.lead", values);
+                const created = await searchReadOdoo("crm.lead", [["id", "=", newLeadId]], LEAD_FIELDS, 1);
+
+                return {
+                    content:
+                        `## CRM Fırsatı Oluşturuldu!\n\n` +
+                        `| Alan | Değer |\n|------|-------|\n` +
+                        `| ID | **${newLeadId}** |\n` +
+                        `| Fırsat | **${leadData.name}** |\n` +
+                        (leadData.partner_name ? `| Müşteri | **${leadData.partner_name}** |\n` : '') +
+                        (leadData.expected_revenue ? `| Beklenen Gelir | **${Number(leadData.expected_revenue).toLocaleString('tr-TR')} ₺** |\n` : '') +
+                        `\nKayıt Odoo CRM'de başarıyla oluşturuldu.`,
+                    data: created,
+                    ui_component: 'table'
                 };
             }
 
