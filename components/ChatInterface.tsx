@@ -11,6 +11,7 @@ import styles from './ChatInterface.module.css'
 import DynamicWidget from './DynamicComponents'
 import SettingsPanel from './SettingsPanel'
 import WriteConfirmation from './WriteConfirmation'
+import ConnectionWizard from './ConnectionWizard'
 import { AppSettings, DEFAULT_SETTINGS, SETTINGS_KEY } from '@/lib/types/settings'
 
 
@@ -62,6 +63,7 @@ export default function ChatInterface() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true)
     const [isDashboardOpen, setIsDashboardOpen] = useState(true)
     const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+    const [isConnectionWizardOpen, setIsConnectionWizardOpen] = useState(false)
 
     // Settings state with localStorage persistence
     const [appSettings, setAppSettings] = useState<AppSettings>(() => {
@@ -92,6 +94,21 @@ export default function ChatInterface() {
 
     // --- Auth & Persistence Logic ---
     useEffect(() => {
+        // Check connection status on mount
+        fetch('/api/connection')
+            .then(res => res.json())
+            .then(data => {
+                if (!data.configured && !data.connected) {
+                    setIsConnectionWizardOpen(true);
+                }
+            })
+            .catch(() => {
+                // If API fails, still show wizard for first-time setup
+                if (!appSettings.connection?.configured) {
+                    setIsConnectionWizardOpen(true);
+                }
+            });
+
         // Fetch Dashboard Stats
         fetch('/api/dashboard')
             .then(res => res.json())
@@ -437,7 +454,7 @@ export default function ChatInterface() {
                     if (m.data?.pendingAction?.actionId === actionId) {
                         return {
                             ...m,
-                            content: `## ${m.data.title}\n\nAşağıdaki veriler Odoo'ya kaydedilecek. Onaylıyor musunuz?`,
+                            content: `## ${m.data.title}\n\nAsagidaki veriler veritabanina kaydedilecek. Onayliyor musunuz?`,
                             data: {
                                 ...m.data,
                                 pendingAction: { ...m.data.pendingAction, step: 'confirm' }
@@ -479,7 +496,7 @@ export default function ChatInterface() {
                 const botMsg: Message = {
                     id: Date.now().toString(),
                     role: 'bot',
-                    content: 'İşlem iptal edildi. Kayıt Odoo\'ya yazılmadı.',
+                    content: 'Islem iptal edildi. Kayit veritabanina yazilmadi.',
                     timestamp: new Date()
                 };
                 setSessions(prev => prev.map(s => {
@@ -566,8 +583,8 @@ export default function ChatInterface() {
         // Simulate Reasoning Steps
         const steps = [
             "Istek analiz ediliyor...",
-            "Odoo veritabanina baglaniliyor...",
-            "Ilgili moduller taraniyor...",
+            "Veritabanina baglaniliyor...",
+            "Ilgili tablolar taraniyor...",
             "Veriler gorsellestiriliyor..."
         ];
 
@@ -920,6 +937,27 @@ export default function ChatInterface() {
                     settings={appSettings}
                     onSettingsChange={handleSettingsChange}
                     onClose={() => setIsSettingsOpen(false)}
+                    onOpenConnectionWizard={() => setIsConnectionWizardOpen(true)}
+                />
+            )}
+
+            {/* --- CONNECTION WIZARD --- */}
+            {isConnectionWizardOpen && (
+                <ConnectionWizard
+                    onComplete={() => {
+                        setIsConnectionWizardOpen(false);
+                        setAppSettings(prev => ({
+                            ...prev,
+                            connection: { ...prev.connection, configured: true }
+                        }));
+                        // Refresh dashboard stats after new connection
+                        fetch('/api/dashboard')
+                            .then(res => res.json())
+                            .then(data => setDashboardStats(data))
+                            .catch(() => {});
+                    }}
+                    onClose={() => setIsConnectionWizardOpen(false)}
+                    showClose={appSettings.connection?.configured === true}
                 />
             )}
         </div>

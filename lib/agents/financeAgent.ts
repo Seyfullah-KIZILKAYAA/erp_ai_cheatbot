@@ -15,7 +15,7 @@
  * - revenue_breakdown: Gelir kırılımı grafiği
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -35,8 +35,9 @@ type FinanceIntent =
     | "create_invoice"
     | "update_invoice";
 
-const INVOICE_FIELDS = ["id", "name", "partner_id", "amount_total", "payment_state", "state", "invoice_date"];
-const PAYMENT_FIELDS = ["id", "name", "partner_id", "amount", "payment_type", "date", "state"];
+// Dynamic field resolution
+const getInvoiceFields = () => getFields('invoices', ['id', 'name', 'customer', 'totalAmount', 'paymentStatus', 'status', 'date']);
+const getPaymentFields = () => getFields('payments', ['id', 'name', 'customer', 'amount', 'type', 'date', 'status']);
 
 const PAYMENT_STATE_LABELS: Record<string, string> = {
     not_paid: "Ödenmedi",
@@ -85,8 +86,9 @@ export async function processFinanceQuery(userQuery: string, history: any[], wri
     }
 
     // --- LLM-based intent detection ---
+    const connLabel = getConnectionLabel();
     const systemPrompt = `
-    Sen bir **Finans ve Muhasebe AI Uzmanısın**. Odoo ERP'de faturalar, ödemeler ve finansal performansı analiz ediyorsun.
+    Sen bir **Finans ve Muhasebe AI Uzmanısın**. ${connLabel} sisteminde faturalar, ödemeler ve finansal performansı analiz ediyorsun.
 
     MEVCUT ANALİZ TÜRLERİ:
     1. "invoice_list" → Faturaları listele
@@ -162,22 +164,22 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
     try {
         switch (intent) {
             case "invoice_list": {
-                const data = await searchReadOdoo(
-                    "account.move", [["state", "=", "posted"]], INVOICE_FIELDS, 50, "invoice_date DESC"
+                const data = await searchData(
+                    getTables().invoices, [[getField('invoices', 'status'), "=", "posted"]], getInvoiceFields(), 50, `${getField('invoices', 'date')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Sistemde onaylı fatura bulunamadı.", data: null, ui_component: null };
                 }
 
-                const total = data.reduce((s: number, r: any) => s + Number(r.amount_total || 0), 0);
+                const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'invoices', 'totalAmount'), 0);
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
                     fatura: r.name,
-                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : r.partner_id,
-                    tutar: Number(r.amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    odeme_durumu: PAYMENT_STATE_LABELS[r.payment_state] || r.payment_state,
-                    tarih: r.invoice_date
+                    musteri: getValue(r, 'invoices', 'customer'),
+                    tutar: getNumericValue(r, 'invoices', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    odeme_durumu: PAYMENT_STATE_LABELS[getRawValue(r, 'invoices', 'paymentStatus')] || getValue(r, 'invoices', 'paymentStatus'),
+                    tarih: r[getField('invoices', 'date')]
                 }));
 
                 return {
@@ -192,17 +194,17 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
 
             case "invoice_summary": {
                 const [totalInvoices, postedInvoices, draftInvoices, paidCount, unpaidCount] = await Promise.all([
-                    countOdoo("account.move", []),
-                    countOdoo("account.move", [["state", "=", "posted"]]),
-                    countOdoo("account.move", [["state", "=", "draft"]]),
-                    countOdoo("account.move", [["state", "=", "posted"], ["payment_state", "=", "paid"]]),
-                    countOdoo("account.move", [["state", "=", "posted"], ["payment_state", "=", "not_paid"]])
+                    countData(getTables().invoices, []),
+                    countData(getTables().invoices, [[getField('invoices', 'status'), "=", "posted"]]),
+                    countData(getTables().invoices, [[getField('invoices', 'status'), "=", "draft"]]),
+                    countData(getTables().invoices, [[getField('invoices', 'status'), "=", "posted"], [getField('invoices', 'paymentStatus'), "=", "paid"]]),
+                    countData(getTables().invoices, [[getField('invoices', 'status'), "=", "posted"], [getField('invoices', 'paymentStatus'), "=", "not_paid"]])
                 ]);
 
-                const invoices = await searchReadOdoo(
-                    "account.move", [["state", "=", "posted"]], ["amount_total"], 500, ""
+                const invoices = await searchData(
+                    getTables().invoices, [[getField('invoices', 'status'), "=", "posted"]], [getField('invoices', 'totalAmount')], 500, ""
                 );
-                const amounts = (invoices || []).map((r: any) => Number(r.amount_total || 0));
+                const amounts = (invoices || []).map((r: any) => getNumericValue(r, 'invoices', 'totalAmount'));
                 const totalAmount = amounts.reduce((a: number, b: number) => a + b, 0);
                 const avgAmount = amounts.length ? totalAmount / amounts.length : 0;
                 const maxAmount = amounts.length ? Math.max(...amounts) : 0;
@@ -227,19 +229,19 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
             }
 
             case "payment_list": {
-                const data = await searchReadOdoo("account.payment", [], PAYMENT_FIELDS, 50, "date DESC");
+                const data = await searchData(getTables().payments, [], getPaymentFields(), 50, `${getField('payments', 'date')} DESC`);
                 if (!data?.length) {
                     return { content: "Sistemde ödeme kaydı bulunamadı.", data: null, ui_component: null };
                 }
-                const total = data.reduce((s: number, r: any) => s + Number(r.amount || 0), 0);
+                const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'payments', 'amount'), 0);
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
                     odeme: r.name,
-                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : r.partner_id,
-                    tutar: Number(r.amount).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    tip: r.payment_type === 'inbound' ? 'Tahsilat' : 'Ödeme',
-                    durum: r.state,
-                    tarih: r.date
+                    musteri: getValue(r, 'payments', 'customer'),
+                    tutar: getNumericValue(r, 'payments', 'amount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    tip: getRawValue(r, 'payments', 'type') === 'inbound' ? 'Tahsilat' : 'Ödeme',
+                    durum: getRawValue(r, 'payments', 'status'),
+                    tarih: r[getField('payments', 'date')]
                 }));
                 return {
                     content: `## 💳 Ödeme Listesi\n\nToplam **${data.length}** ödeme kaydı.\nToplam tutar: **${total.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**`,
@@ -249,11 +251,11 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
             }
 
             case "payment_summary": {
-                const payments = await searchReadOdoo("account.payment", [["state", "=", "posted"]], ["amount", "payment_type"], 500, "");
-                const inbound = (payments || []).filter((p: any) => p.payment_type === 'inbound');
-                const outbound = (payments || []).filter((p: any) => p.payment_type === 'outbound');
-                const inboundTotal = inbound.reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
-                const outboundTotal = outbound.reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+                const payments = await searchData(getTables().payments, [[getField('payments', 'status'), "=", "posted"]], [getField('payments', 'amount'), getField('payments', 'type')], 500, "");
+                const inbound = (payments || []).filter((p: any) => getRawValue(p, 'payments', 'type') === 'inbound');
+                const outbound = (payments || []).filter((p: any) => getRawValue(p, 'payments', 'type') === 'outbound');
+                const inboundTotal = inbound.reduce((s: number, p: any) => s + getNumericValue(p, 'payments', 'amount'), 0);
+                const outboundTotal = outbound.reduce((s: number, p: any) => s + getNumericValue(p, 'payments', 'amount'), 0);
                 const netFlow = inboundTotal - outboundTotal;
 
                 return {
@@ -270,18 +272,18 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
             }
 
             case "unpaid_invoices": {
-                const data = await searchReadOdoo(
-                    "account.move", [["state", "=", "posted"], ["payment_state", "=", "not_paid"]], INVOICE_FIELDS, 50, "amount_total DESC"
+                const data = await searchData(
+                    getTables().invoices, [[getField('invoices', 'status'), "=", "posted"], [getField('invoices', 'paymentStatus'), "=", "not_paid"]], getInvoiceFields(), 50, `${getField('invoices', 'totalAmount')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Tüm faturalar ödenmiş durumda.", data: null, ui_component: null };
                 }
-                const total = data.reduce((s: number, r: any) => s + Number(r.amount_total || 0), 0);
+                const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'invoices', 'totalAmount'), 0);
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1, fatura: r.name,
-                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : r.partner_id,
-                    tutar: Number(r.amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    tarih: r.invoice_date
+                    musteri: getValue(r, 'invoices', 'customer'),
+                    tutar: getNumericValue(r, 'invoices', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    tarih: r[getField('invoices', 'date')]
                 }));
                 return {
                     content: `## 🚨 Ödenmemiş Faturalar\n\nToplam **${data.length}** ödenmemiş fatura.\nToplam alacak: **${total.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**`,
@@ -292,18 +294,18 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
 
             case "overdue_analysis": {
                 const today = new Date().toISOString().split('T')[0];
-                const data = await searchReadOdoo(
-                    "account.move", [["state", "=", "posted"], ["payment_state", "=", "not_paid"], ["invoice_date", "<", today]], INVOICE_FIELDS, 50, "invoice_date ASC"
+                const data = await searchData(
+                    getTables().invoices, [[getField('invoices', 'status'), "=", "posted"], [getField('invoices', 'paymentStatus'), "=", "not_paid"], [getField('invoices', 'date'), "<", today]], getInvoiceFields(), 50, `${getField('invoices', 'date')} ASC`
                 );
                 if (!data?.length) {
                     return { content: "Vadesi geçmiş fatura bulunmuyor.", data: null, ui_component: null };
                 }
-                const total = data.reduce((s: number, r: any) => s + Number(r.amount_total || 0), 0);
+                const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'invoices', 'totalAmount'), 0);
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1, fatura: r.name,
-                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : r.partner_id,
-                    tutar: Number(r.amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    fatura_tarihi: r.invoice_date
+                    musteri: getValue(r, 'invoices', 'customer'),
+                    tutar: getNumericValue(r, 'invoices', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    fatura_tarihi: r[getField('invoices', 'date')]
                 }));
                 return {
                     content: `## ⏰ Vadesi Geçmiş Faturalar\n\n**${data.length}** adet faturanın vadesi geçmiş.\nGecikmiş tutar: **${total.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**\n\nAcil tahsilat aksiyonu gerekli!`,
@@ -315,7 +317,7 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
             case "payment_status": {
                 const states = ["not_paid", "in_payment", "paid", "partial"];
                 const counts = await Promise.all(
-                    states.map(s => countOdoo("account.move", [["state", "=", "posted"], ["payment_state", "=", s]]))
+                    states.map(s => countData(getTables().invoices, [[getField('invoices', 'status'), "=", "posted"], [getField('invoices', 'paymentStatus'), "=", s]]))
                 );
                 const chartData = states.map((s, i) => ({
                     name: PAYMENT_STATE_LABELS[s] || s,
@@ -331,13 +333,13 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
             }
 
             case "revenue_breakdown": {
-                const data = await searchReadOdoo("account.move", [["state", "=", "posted"]], ["partner_id", "amount_total"], 200, "amount_total DESC");
+                const data = await searchData(getTables().invoices, [[getField('invoices', 'status'), "=", "posted"]], [getField('invoices', 'customer'), getField('invoices', 'totalAmount')], 200, `${getField('invoices', 'totalAmount')} DESC`);
                 if (!data?.length) return { content: "Gelir kırılımı için yeterli veri yok.", data: null, ui_component: null };
 
                 const revenueByPartner: Record<string, number> = {};
                 data.forEach((r: any) => {
-                    const name = Array.isArray(r.partner_id) ? r.partner_id[1] : String(r.partner_id);
-                    revenueByPartner[name] = (revenueByPartner[name] || 0) + Number(r.amount_total || 0);
+                    const name = getValue(r, 'invoices', 'customer');
+                    revenueByPartner[name] = (revenueByPartner[name] || 0) + getNumericValue(r, 'invoices', 'totalAmount');
                 });
                 const chartData = Object.entries(revenueByPartner).sort((a, b) => b[1] - a[1]).slice(0, 10)
                     .map(([name, revenue]) => ({
@@ -411,7 +413,7 @@ Eğer fatura numarası bulunamadıysa {"invoice_name": null} döndür.`);
     } catch (error: any) {
         console.error("Finance Action Error:", error);
         if (error.message?.includes("ECONNREFUSED")) {
-            return { content: "⚠️ Odoo ERP sistemine bağlanılamıyor. Lütfen Odoo servisinin (localhost:8069) çalıştığından emin olun.", data: null, ui_component: null };
+            return { content: getConnectionErrorMessage(), data: null, ui_component: null };
         }
         return { content: "Finans verisi işlenirken hata oluştu: " + error.message, data: null, ui_component: null };
     }

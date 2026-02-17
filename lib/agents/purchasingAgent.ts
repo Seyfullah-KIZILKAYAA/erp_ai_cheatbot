@@ -15,7 +15,7 @@
  * - top_purchases: En yüksek tutarlı satın almalar
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -35,8 +35,9 @@ type PurchasingIntent =
     | "create_purchase"
     | "update_purchase";
 
-const PO_FIELDS = ["id", "name", "partner_id", "amount_total", "state", "date_order"];
-const VENDOR_FIELDS = ["id", "name", "email", "phone", "city", "is_company"];
+// Dynamic field resolution - adapts to connected database
+const getPOFields = () => getFields('purchaseOrders', ['id', 'name', 'vendor', 'totalAmount', 'status', 'date']);
+const getVendorFields = () => getFields('customers', ['id', 'name', 'email', 'phone', 'city', 'isCompany']);
 
 const PO_STATE_LABELS: Record<string, string> = {
     draft: "Taslak (RFQ)",
@@ -83,8 +84,9 @@ export async function processPurchasingQuery(userQuery: string, history: any[], 
     }
 
     // --- LLM-based intent detection ---
+    const connLabel = getConnectionLabel();
     const systemPrompt = `
-    Sen bir **Satın Alma ve Tedarik Zinciri AI Uzmanısın**. Odoo ERP'de satın alma siparişleri ve tedarikçi yönetimi yapıyorsun.
+    Sen bir **Satın Alma ve Tedarik Zinciri AI Uzmanısın**. ${connLabel} sisteminde satın alma siparişleri ve tedarikçi yönetimi yapıyorsun.
 
     MEVCUT ANALİZ TÜRLERİ:
     1. "po_list" → Satın alma siparişlerini listele
@@ -160,19 +162,19 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
     try {
         switch (intent) {
             case "po_list": {
-                const data = await searchReadOdoo("purchase.order", [], PO_FIELDS, 50, "date_order DESC");
+                const data = await searchData(getTables().purchaseOrders, [], getPOFields(), 50, `${getField('purchaseOrders', 'date')} DESC`);
                 if (!data?.length) {
                     return { content: "Sistemde satın alma siparişi bulunamadı.", data: null, ui_component: null };
                 }
 
-                const total = data.reduce((s: number, r: any) => s + Number(r.amount_total || 0), 0);
+                const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'purchaseOrders', 'totalAmount'), 0);
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    siparis: r.name,
-                    tedarikci: Array.isArray(r.partner_id) ? r.partner_id[1] : r.partner_id,
-                    tutar: Number(r.amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    durum: PO_STATE_LABELS[r.state] || r.state,
-                    tarih: r.date_order
+                    siparis: getValue(r, 'purchaseOrders', 'name'),
+                    tedarikci: getValue(r, 'purchaseOrders', 'vendor'),
+                    tutar: getNumericValue(r, 'purchaseOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    durum: PO_STATE_LABELS[getRawValue(r, 'purchaseOrders', 'status')] || getValue(r, 'purchaseOrders', 'status'),
+                    tarih: getValue(r, 'purchaseOrders', 'date')
                 }));
 
                 return {
@@ -187,22 +189,22 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
 
             case "po_summary": {
                 const [totalPO, confirmedPO, draftPO, cancelledPO] = await Promise.all([
-                    countOdoo("purchase.order", []),
-                    countOdoo("purchase.order", [["state", "=", "purchase"]]),
-                    countOdoo("purchase.order", [["state", "=", "draft"]]),
-                    countOdoo("purchase.order", [["state", "=", "cancel"]])
+                    countData(getTables().purchaseOrders, []),
+                    countData(getTables().purchaseOrders, [[getField('purchaseOrders', 'status'), "=", "purchase"]]),
+                    countData(getTables().purchaseOrders, [[getField('purchaseOrders', 'status'), "=", "draft"]]),
+                    countData(getTables().purchaseOrders, [[getField('purchaseOrders', 'status'), "=", "cancel"]])
                 ]);
 
-                const orders = await searchReadOdoo(
-                    "purchase.order", [["state", "=", "purchase"]], ["amount_total"], 500, ""
+                const orders = await searchData(
+                    getTables().purchaseOrders, [[getField('purchaseOrders', 'status'), "=", "purchase"]], [getField('purchaseOrders', 'totalAmount')], 500, ""
                 );
-                const amounts = (orders || []).map((r: any) => Number(r.amount_total || 0));
+                const amounts = (orders || []).map((r: any) => getNumericValue(r, 'purchaseOrders', 'totalAmount'));
                 const totalAmount = amounts.reduce((a: number, b: number) => a + b, 0);
                 const avgAmount = amounts.length ? totalAmount / amounts.length : 0;
                 const maxAmount = amounts.length ? Math.max(...amounts) : 0;
                 const minAmount = amounts.length ? Math.min(...amounts) : 0;
 
-                const vendorCount = await countOdoo("res.partner", [["is_company", "=", true]]);
+                const vendorCount = await countData(getTables().customers, [[getField('customers', 'isCompany'), "=", true]]);
 
                 return {
                     content:
@@ -223,23 +225,23 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
             }
 
             case "pending_orders": {
-                const data = await searchReadOdoo(
-                    "purchase.order",
-                    [["state", "in", ["draft", "sent", "to approve"]]],
-                    PO_FIELDS, 50, "date_order DESC"
+                const data = await searchData(
+                    getTables().purchaseOrders,
+                    [[getField('purchaseOrders', 'status'), "in", ["draft", "sent", "to approve"]]],
+                    getPOFields(), 50, `${getField('purchaseOrders', 'date')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Bekleyen satın alma siparişi bulunmuyor.", data: null, ui_component: null };
                 }
 
-                const total = data.reduce((s: number, r: any) => s + Number(r.amount_total || 0), 0);
+                const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'purchaseOrders', 'totalAmount'), 0);
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    siparis: r.name,
-                    tedarikci: Array.isArray(r.partner_id) ? r.partner_id[1] : r.partner_id,
-                    tutar: Number(r.amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    durum: PO_STATE_LABELS[r.state] || r.state,
-                    tarih: r.date_order
+                    siparis: getValue(r, 'purchaseOrders', 'name'),
+                    tedarikci: getValue(r, 'purchaseOrders', 'vendor'),
+                    tutar: getNumericValue(r, 'purchaseOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    durum: PO_STATE_LABELS[getRawValue(r, 'purchaseOrders', 'status')] || getValue(r, 'purchaseOrders', 'status'),
+                    tarih: getValue(r, 'purchaseOrders', 'date')
                 }));
 
                 return {
@@ -253,8 +255,8 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
             }
 
             case "vendor_list": {
-                const data = await searchReadOdoo(
-                    "res.partner", [["is_company", "=", true]], VENDOR_FIELDS, 100, "name ASC"
+                const data = await searchData(
+                    getTables().customers, [[getField('customers', 'isCompany'), "=", true]], getVendorFields(), 100, `${getField('customers', 'name')} ASC`
                 );
                 if (!data?.length) {
                     return { content: "Sistemde tedarikçi kaydı bulunamadı.", data: null, ui_component: null };
@@ -262,17 +264,17 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
 
                 const cityCounts: Record<string, number> = {};
                 data.forEach((r: any) => {
-                    const city = r.city || 'Belirtilmemiş';
+                    const city = getValue(r, 'customers', 'city', 'Belirtilmemiş');
                     cityCounts[city] = (cityCounts[city] || 0) + 1;
                 });
                 const topCity = Object.entries(cityCounts).sort((a, b) => b[1] - a[1])[0];
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    ad: r.name,
-                    email: r.email || '-',
-                    telefon: r.phone || '-',
-                    sehir: r.city || '-'
+                    ad: getValue(r, 'customers', 'name'),
+                    email: getValue(r, 'customers', 'email') || '-',
+                    telefon: getValue(r, 'customers', 'phone') || '-',
+                    sehir: getValue(r, 'customers', 'city') || '-'
                 }));
 
                 return {
@@ -288,15 +290,15 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
 
             case "vendor_search": {
                 const term = searchTerm || userQuery;
-                const data = await searchReadOdoo(
-                    "res.partner", [["name", "ilike", term], ["is_company", "=", true]], VENDOR_FIELDS, 20, "name ASC"
+                const data = await searchData(
+                    getTables().customers, [[getField('customers', 'name'), "ilike", term], [getField('customers', 'isCompany'), "=", true]], getVendorFields(), 20, `${getField('customers', 'name')} ASC`
                 );
                 if (!data?.length) {
                     return { content: `"${term}" ile eşleşen tedarikçi bulunamadı.`, data: null, ui_component: null };
                 }
 
                 const tableData = data.map((r: any) => ({
-                    ad: r.name, email: r.email || '-', telefon: r.phone || '-', sehir: r.city || '-'
+                    ad: getValue(r, 'customers', 'name'), email: getValue(r, 'customers', 'email') || '-', telefon: getValue(r, 'customers', 'phone') || '-', sehir: getValue(r, 'customers', 'city') || '-'
                 }));
 
                 return {
@@ -307,8 +309,8 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
             }
 
             case "top_vendors": {
-                const data = await searchReadOdoo(
-                    "purchase.order", [["state", "=", "purchase"]], ["partner_id", "amount_total"], 200, "amount_total DESC"
+                const data = await searchData(
+                    getTables().purchaseOrders, [[getField('purchaseOrders', 'status'), "=", "purchase"]], [getField('purchaseOrders', 'vendor'), getField('purchaseOrders', 'totalAmount')], 200, `${getField('purchaseOrders', 'totalAmount')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Tedarikçi analizi için yeterli veri yok.", data: null, ui_component: null };
@@ -316,8 +318,8 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
 
                 const spendByVendor: Record<string, number> = {};
                 data.forEach((r: any) => {
-                    const name = Array.isArray(r.partner_id) ? r.partner_id[1] : String(r.partner_id);
-                    spendByVendor[name] = (spendByVendor[name] || 0) + Number(r.amount_total || 0);
+                    const name = getValue(r, 'purchaseOrders', 'vendor');
+                    spendByVendor[name] = (spendByVendor[name] || 0) + getNumericValue(r, 'purchaseOrders', 'totalAmount');
                 });
 
                 const chartData = Object.entries(spendByVendor)
@@ -341,7 +343,7 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
             case "po_status": {
                 const states = ["draft", "sent", "to_approve", "purchase", "done", "cancel"];
                 const counts = await Promise.all(
-                    states.map(s => countOdoo("purchase.order", [["state", "=", s]]))
+                    states.map(s => countData(getTables().purchaseOrders, [[getField('purchaseOrders', 'status'), "=", s]]))
                 );
 
                 const chartData = states.map((s, i) => ({
@@ -364,8 +366,8 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
             }
 
             case "top_purchases": {
-                const data = await searchReadOdoo(
-                    "purchase.order", [["state", "=", "purchase"]], PO_FIELDS, 10, "amount_total DESC"
+                const data = await searchData(
+                    getTables().purchaseOrders, [[getField('purchaseOrders', 'status'), "=", "purchase"]], getPOFields(), 10, `${getField('purchaseOrders', 'totalAmount')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Onaylı satın alma siparişi bulunamadı.", data: null, ui_component: null };
@@ -373,17 +375,17 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    siparis: r.name,
-                    tedarikci: Array.isArray(r.partner_id) ? r.partner_id[1] : r.partner_id,
-                    tutar: Number(r.amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    tarih: r.date_order
+                    siparis: getValue(r, 'purchaseOrders', 'name'),
+                    tedarikci: getValue(r, 'purchaseOrders', 'vendor'),
+                    tutar: getNumericValue(r, 'purchaseOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    tarih: getValue(r, 'purchaseOrders', 'date')
                 }));
 
                 return {
                     content:
                         `## 🏆 En Yüksek Tutarlı Satın Almalar (Top 10)\n\n` +
-                        `En büyük alım: **${data[0].name}** — ` +
-                        `**${Number(data[0].amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**`,
+                        `En büyük alım: **${getValue(data[0], 'purchaseOrders', 'name')}** — ` +
+                        `**${getNumericValue(data[0], 'purchaseOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**`,
                     data: tableData,
                     ui_component: 'table'
                 };
@@ -449,7 +451,7 @@ Eğer sipariş numarası bulunamadıysa {"po_name": null} döndür.`);
     } catch (error: any) {
         console.error("Purchasing Action Error:", error);
         if (error.message?.includes("ECONNREFUSED")) {
-            return { content: "⚠️ Odoo ERP sistemine bağlanılamıyor. Lütfen Odoo servisinin (localhost:8069) çalıştığından emin olun.", data: null, ui_component: null };
+            return { content: getConnectionErrorMessage(), data: null, ui_component: null };
         }
         return { content: "Satın alma verisi işlenirken hata oluştu: " + error.message, data: null, ui_component: null };
     }

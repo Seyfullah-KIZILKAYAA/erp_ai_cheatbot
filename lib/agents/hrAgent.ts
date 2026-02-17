@@ -13,7 +13,7 @@
  * - position_analysis: Pozisyon bazlı analiz
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -31,7 +31,8 @@ type HrIntent =
     | "create_employee"
     | "update_employee";
 
-const EMPLOYEE_FIELDS = ["id", "name", "work_email", "mobile_phone", "department_id", "job_title"];
+// Dynamic field resolution
+const getEmployeeFields = () => getFields('employees', ['id', 'name', 'email', 'phone', 'department', 'jobTitle']);
 
 export async function processHrQuery(userQuery: string, history: any[], writeEnabled: boolean = false) {
     const lower = userQuery.toLowerCase();
@@ -65,8 +66,9 @@ export async function processHrQuery(userQuery: string, history: any[], writeEna
     }
 
     // --- LLM-based intent detection ---
+    const connLabel = getConnectionLabel();
     const systemPrompt = `
-    Sen bir **İnsan Kaynakları (HR) AI Uzmanısın**. Odoo ERP'de çalışan kayıtları, departman ve pozisyon verilerini analiz ediyorsun.
+    Sen bir **İnsan Kaynakları (HR) AI Uzmanısın**. ${connLabel}'de çalışan kayıtları, departman ve pozisyon verilerini analiz ediyorsun.
 
     MEVCUT ANALİZ TÜRLERİ:
     1. "employee_list" → Çalışan listesi
@@ -140,24 +142,24 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
     try {
         switch (intent) {
             case "employee_list": {
-                const data = await searchReadOdoo("hr.employee", [], EMPLOYEE_FIELDS, 200, "name ASC");
+                const data = await searchData(getTables().employees, [], getEmployeeFields(), 200, `${getField('employees', 'name')} ASC`);
                 if (!data?.length) {
                     return { content: "Sistemde çalışan kaydı bulunamadı.", data: null, ui_component: null };
                 }
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    ad: r.name,
-                    email: r.work_email || '-',
-                    telefon: r.mobile_phone || '-',
-                    departman: Array.isArray(r.department_id) ? r.department_id[1] : (r.department_id || '-'),
-                    pozisyon: r.job_title || '-'
+                    ad: getValue(r, 'employees', 'name'),
+                    email: getValue(r, 'employees', 'email'),
+                    telefon: getValue(r, 'employees', 'phone'),
+                    departman: getValue(r, 'employees', 'department'),
+                    pozisyon: getValue(r, 'employees', 'jobTitle')
                 }));
 
                 // Departman sayımı
                 const deptCounts: Record<string, number> = {};
                 data.forEach((r: any) => {
-                    const dept = Array.isArray(r.department_id) ? r.department_id[1] : (r.department_id || 'Belirtilmemiş');
+                    const dept = getValue(r, 'employees', 'department', 'Belirtilmemiş');
                     deptCounts[dept] = (deptCounts[dept] || 0) + 1;
                 });
                 const topDept = Object.entries(deptCounts).sort((a, b) => b[1] - a[1])[0];
@@ -175,20 +177,20 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
             }
 
             case "employee_summary": {
-                const totalEmployees = await countOdoo("hr.employee", []);
+                const totalEmployees = await countData(getTables().employees, []);
 
-                const employees = await searchReadOdoo(
-                    "hr.employee", [], ["department_id", "job_title"], 500, ""
+                const employees = await searchData(
+                    getTables().employees, [], [getField('employees', 'department'), getField('employees', 'jobTitle')], 500, ""
                 );
 
                 const deptCounts: Record<string, number> = {};
                 const positionCounts: Record<string, number> = {};
 
                 (employees || []).forEach((r: any) => {
-                    const dept = Array.isArray(r.department_id) ? r.department_id[1] : (r.department_id || 'Belirtilmemiş');
+                    const dept = getValue(r, 'employees', 'department', 'Belirtilmemiş');
                     deptCounts[dept] = (deptCounts[dept] || 0) + 1;
 
-                    const position = r.job_title || 'Belirtilmemiş';
+                    const position = getValue(r, 'employees', 'jobTitle', 'Belirtilmemiş');
                     positionCounts[position] = (positionCounts[position] || 0) + 1;
                 });
 
@@ -220,18 +222,18 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
 
             case "employee_search": {
                 const term = searchTerm || userQuery;
-                const data = await searchReadOdoo(
-                    "hr.employee", [["name", "ilike", term]], EMPLOYEE_FIELDS, 20, "name ASC"
+                const data = await searchData(
+                    getTables().employees, [[getField('employees', 'name'), "ilike", term]], getEmployeeFields(), 20, `${getField('employees', 'name')} ASC`
                 );
                 if (!data?.length) {
                     return { content: `"${term}" ile eşleşen çalışan bulunamadı.`, data: null, ui_component: null };
                 }
                 const tableData = data.map((r: any) => ({
-                    ad: r.name,
-                    email: r.work_email || '-',
-                    telefon: r.mobile_phone || '-',
-                    departman: Array.isArray(r.department_id) ? r.department_id[1] : (r.department_id || '-'),
-                    pozisyon: r.job_title || '-'
+                    ad: getValue(r, 'employees', 'name'),
+                    email: getValue(r, 'employees', 'email'),
+                    telefon: getValue(r, 'employees', 'phone'),
+                    departman: getValue(r, 'employees', 'department'),
+                    pozisyon: getValue(r, 'employees', 'jobTitle')
                 }));
                 return {
                     content: `## 🔍 Çalışan Arama: "${term}"\n\n**${data.length}** sonuç bulundu.`,
@@ -241,8 +243,8 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
             }
 
             case "department_breakdown": {
-                const employees = await searchReadOdoo(
-                    "hr.employee", [], ["department_id"], 500, ""
+                const employees = await searchData(
+                    getTables().employees, [], [getField('employees', 'department')], 500, ""
                 );
                 if (!employees?.length) {
                     return { content: "Departman analizi için yeterli veri yok.", data: null, ui_component: null };
@@ -250,7 +252,7 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
 
                 const deptCounts: Record<string, number> = {};
                 employees.forEach((r: any) => {
-                    const dept = Array.isArray(r.department_id) ? r.department_id[1] : (r.department_id || 'Belirtilmemiş');
+                    const dept = getValue(r, 'employees', 'department', 'Belirtilmemiş');
                     deptCounts[dept] = (deptCounts[dept] || 0) + 1;
                 });
 
@@ -272,7 +274,7 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
             }
 
             case "headcount": {
-                const count = await countOdoo("hr.employee", []);
+                const count = await countData(getTables().employees, []);
                 return {
                     content: `## 👥 Personel Sayısı\n\nŞirket genelinde toplam **${count}** aktif çalışan bulunmaktadır.`,
                     data: { count },
@@ -281,8 +283,8 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
             }
 
             case "position_analysis": {
-                const employees = await searchReadOdoo(
-                    "hr.employee", [], ["job_title"], 500, ""
+                const employees = await searchData(
+                    getTables().employees, [], [getField('employees', 'jobTitle')], 500, ""
                 );
                 if (!employees?.length) {
                     return { content: "Pozisyon analizi için yeterli veri yok.", data: null, ui_component: null };
@@ -290,7 +292,7 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
 
                 const positionCounts: Record<string, number> = {};
                 employees.forEach((r: any) => {
-                    const pos = r.job_title || 'Belirtilmemiş';
+                    const pos = getValue(r, 'employees', 'jobTitle', 'Belirtilmemiş');
                     positionCounts[pos] = (positionCounts[pos] || 0) + 1;
                 });
 
@@ -373,7 +375,7 @@ Eğer personel adı bulunamadıysa {"employee_name": null} döndür.`);
     } catch (error: any) {
         console.error("HR Action Error:", error);
         if (error.message?.includes("ECONNREFUSED")) {
-            return { content: "⚠️ Odoo ERP sistemine bağlanılamıyor. Lütfen Odoo servisinin (localhost:8069) çalıştığından emin olun.", data: null, ui_component: null };
+            return { content: getConnectionErrorMessage(), data: null, ui_component: null };
         }
         return { content: "İK verisi işlenirken hata oluştu: " + error.message, data: null, ui_component: null };
     }

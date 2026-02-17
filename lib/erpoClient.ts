@@ -7,7 +7,7 @@
  * KPIs, trends, forecasts, anomalies, segments and AI reports — all from Odoo.
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchData, countData, getTables } from "@/lib/dataAccess";
 import {
     SYSTEM_PROMPT,
     buildDailyReportPrompt,
@@ -86,8 +86,8 @@ export interface NarrativeResponse {
 // ─── Odoo Data Helpers ────────────────────────────────────────
 
 async function fetchInvoices(): Promise<any[]> {
-    const data = await searchReadOdoo(
-        "account.move",
+    const data = await searchData(
+        getTables().invoices,
         [["move_type", "=", "out_invoice"], ["state", "=", "posted"]],
         ["id", "name", "partner_id", "amount_total", "invoice_date", "payment_state"],
         5000, "invoice_date DESC"
@@ -121,8 +121,8 @@ function getPartnerName(field: any): string {
 export async function getKpiSummary(): Promise<KpiSummary> {
     const [invoices, orderCount, customerCount] = await Promise.all([
         fetchInvoices(),
-        countOdoo("sale.order", [["state", "=", "sale"]]),
-        countOdoo("res.partner", [["customer_rank", ">", 0]]),
+        countData(getTables().salesOrders, [["state", "=", "sale"]]),
+        countData(getTables().customers, [["customer_rank", ">", 0]]),
     ]);
 
     const totalRevenue = invoices.reduce((s: number, i: any) => s + Number(i.amount_total || 0), 0);
@@ -196,8 +196,8 @@ export async function getTopCustomers(limit: number = 10): Promise<TopCustomer[]
 
     let cityMap: Record<number, string> = {};
     if (topIds.length > 0) {
-        const partners = await searchReadOdoo(
-            "res.partner",
+        const partners = await searchData(
+            getTables().customers,
             [["id", "in", topIds]],
             ["id", "city"],
             limit, ""
@@ -458,7 +458,7 @@ export async function getDailyReport(): Promise<NarrativeResponse> {
 export async function getAnomalyReport(): Promise<NarrativeResponse> {
     const [anomalies, invoiceCount] = await Promise.all([
         getRecentAnomalies(50),
-        countOdoo("account.move", [["move_type", "=", "out_invoice"], ["state", "=", "posted"]]),
+        countData(getTables().invoices, [["move_type", "=", "out_invoice"], ["state", "=", "posted"]]),
     ]);
 
     const totalAnomalies = anomalies.length;
@@ -507,7 +507,7 @@ export async function getForecastReport(): Promise<NarrativeResponse> {
 
 export async function checkErpoHealth(): Promise<boolean> {
     try {
-        const count = await countOdoo("res.partner", []);
+        const count = await countData(getTables().customers, []);
         return count >= 0;
     } catch {
         return false;

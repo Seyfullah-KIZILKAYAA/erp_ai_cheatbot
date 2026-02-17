@@ -3,7 +3,7 @@
 /**
  * INVENTORY AGENT
  * Specialized in stock levels, products, warehouses, and supply status.
- * Connects to Odoo ERP via XML-RPC for real-time data.
+ * Connects to the active data source for real-time data.
  *
  * Intent-based architecture:
  * - product_list: Ürün listesi
@@ -15,7 +15,7 @@
  * - stock_chart: Stok durumu bar chart
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -34,9 +34,10 @@ type InventoryIntent =
     | "create_product"
     | "update_product";
 
-const PRODUCT_FIELDS = ["id", "name", "qty_available", "list_price", "default_code"];
-const QUANT_FIELDS = ["id", "product_id", "location_id", "quantity", "reserved_quantity"];
-const MOVE_FIELDS = ["id", "product_id", "date", "quantity", "state", "location_id", "location_dest_id"];
+// Dynamic field resolution
+const getProductFields = () => getFields('products', ['id', 'name', 'quantity', 'price', 'code']);
+const getQuantFields = () => getFields('stockQuants', ['id', 'product', 'location', 'quantity', 'reserved']);
+const getMoveFields = () => getFields('stockMoves', ['id', 'product', 'date', 'quantity', 'status', 'source', 'destination']);
 
 const MOVE_STATE_LABELS: Record<string, string> = {
     draft: "Taslak",
@@ -86,8 +87,9 @@ export async function processInventoryQuery(userQuery: string, history: any[], w
     }
 
     // --- LLM-based intent detection for ambiguous queries ---
+    const connLabel = getConnectionLabel();
     const systemPrompt = `
-    Sen bir **Stok ve Depo Yönetimi AI Uzmanısın**. Odoo ERP sisteminde ürün stok seviyeleri, depo hareketleri ve envanter analizi yapıyorsun.
+    Sen bir **Stok ve Depo Yönetimi AI Uzmanısın**. ${connLabel} sisteminde ürün stok seviyeleri, depo hareketleri ve envanter analizi yapıyorsun.
 
     MEVCUT ANALİZ TÜRLERİ:
     1. "product_list" → Tüm ürünleri listele
@@ -172,8 +174,8 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
         switch (intent) {
             // ─── Product List ───────────────────────────────────────────
             case "product_list": {
-                const data = await searchReadOdoo(
-                    "product.product", [], PRODUCT_FIELDS, 100, "name ASC"
+                const data = await searchData(
+                    getTables().products, [], getProductFields(), 100, `${getField('products', 'name')} ASC`
                 );
                 if (!data?.length) {
                     return { content: "Sistemde ürün kaydı bulunamadı.", data: null, ui_component: null };
@@ -181,14 +183,14 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    kod: r.default_code || '-',
-                    urun: r.name,
-                    stok: Number(r.qty_available ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    fiyat: Number(r.list_price ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺'
+                    kod: r[getField('products', 'code')] || '-',
+                    urun: r[getField('products', 'name')],
+                    stok: getNumericValue(r, 'products', 'quantity').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    fiyat: getNumericValue(r, 'products', 'price').toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺'
                 }));
 
-                const totalQty = data.reduce((s: number, r: any) => s + Number(r.qty_available ?? 0), 0);
-                const criticalCount = data.filter((r: any) => Number(r.qty_available ?? 0) < CRITICAL_THRESHOLD).length;
+                const totalQty = data.reduce((s: number, r: any) => s + getNumericValue(r, 'products', 'quantity'), 0);
+                const criticalCount = data.filter((r: any) => getNumericValue(r, 'products', 'quantity') < CRITICAL_THRESHOLD).length;
 
                 return {
                     content:
@@ -203,8 +205,8 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
 
             // ─── Product / Stock Summary ────────────────────────────────
             case "product_summary": {
-                const allProducts = await searchReadOdoo(
-                    "product.product", [], ["id", "qty_available", "list_price"], 500, ""
+                const allProducts = await searchData(
+                    getTables().products, [], [getField('products', 'id'), getField('products', 'quantity'), getField('products', 'price')], 500, ""
                 );
 
                 const totalProducts = allProducts?.length || 0;
@@ -212,7 +214,7 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                     return { content: "Sistemde ürün kaydı bulunamadı.", data: null, ui_component: null };
                 }
 
-                const quantities = allProducts.map((r: any) => Number(r.qty_available ?? 0));
+                const quantities = allProducts.map((r: any) => getNumericValue(r, 'products', 'quantity'));
                 const totalQty = quantities.reduce((a: number, b: number) => a + b, 0);
                 const avgQty = totalQty / totalProducts;
                 const maxQty = Math.max(...quantities);
@@ -221,12 +223,12 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                 const zeroStockCount = quantities.filter((q: number) => q <= 0).length;
 
                 const totalValue = allProducts.reduce((s: number, r: any) => {
-                    return s + (Number(r.qty_available ?? 0) * Number(r.list_price ?? 0));
+                    return s + (getNumericValue(r, 'products', 'quantity') * getNumericValue(r, 'products', 'price'));
                 }, 0);
 
                 const [totalMoves, doneMoves] = await Promise.all([
-                    countOdoo("stock.move", []),
-                    countOdoo("stock.move", [["state", "=", "done"]])
+                    countData(getTables().stockMoves, []),
+                    countData(getTables().stockMoves, [[getField('stockMoves', 'status'), "=", "done"]])
                 ]);
 
                 return {
@@ -251,10 +253,10 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
 
             // ─── Critical Stock ─────────────────────────────────────────
             case "critical_stock": {
-                const data = await searchReadOdoo(
-                    "product.product",
-                    [["qty_available", "<", CRITICAL_THRESHOLD]],
-                    PRODUCT_FIELDS, 100, "qty_available ASC"
+                const data = await searchData(
+                    getTables().products,
+                    [[getField('products', 'quantity'), "<", CRITICAL_THRESHOLD]],
+                    getProductFields(), 100, `${getField('products', 'quantity')} ASC`
                 );
                 if (!data?.length) {
                     return {
@@ -266,19 +268,19 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                     };
                 }
 
-                const zeroStock = data.filter((r: any) => Number(r.qty_available ?? 0) <= 0);
+                const zeroStock = data.filter((r: any) => getNumericValue(r, 'products', 'quantity') <= 0);
                 const lowStock = data.filter((r: any) => {
-                    const qty = Number(r.qty_available ?? 0);
+                    const qty = getNumericValue(r, 'products', 'quantity');
                     return qty > 0 && qty < CRITICAL_THRESHOLD;
                 });
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    kod: r.default_code || '-',
-                    urun: r.name,
-                    stok: Number(r.qty_available ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    fiyat: Number(r.list_price ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺',
-                    durum: Number(r.qty_available ?? 0) <= 0 ? '🔴 Tükendi' : '🟡 Düşük'
+                    kod: r[getField('products', 'code')] || '-',
+                    urun: r[getField('products', 'name')],
+                    stok: getNumericValue(r, 'products', 'quantity').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    fiyat: getNumericValue(r, 'products', 'price').toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺',
+                    durum: getNumericValue(r, 'products', 'quantity') <= 0 ? '🔴 Tükendi' : '🟡 Düşük'
                 }));
 
                 return {
@@ -301,10 +303,10 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                     return { content: "Lütfen aramak istediğiniz ürün adını belirtin.", data: null, ui_component: null };
                 }
 
-                const data = await searchReadOdoo(
-                    "product.product",
-                    [["name", "ilike", term]],
-                    PRODUCT_FIELDS, 50, "name ASC"
+                const data = await searchData(
+                    getTables().products,
+                    [[getField('products', 'name'), "ilike", term]],
+                    getProductFields(), 50, `${getField('products', 'name')} ASC`
                 );
                 if (!data?.length) {
                     return {
@@ -316,10 +318,10 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    kod: r.default_code || '-',
-                    urun: r.name,
-                    stok: Number(r.qty_available ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    fiyat: Number(r.list_price ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺'
+                    kod: r[getField('products', 'code')] || '-',
+                    urun: r[getField('products', 'name')],
+                    stok: getNumericValue(r, 'products', 'quantity').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    fiyat: getNumericValue(r, 'products', 'price').toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺'
                 }));
 
                 return {
@@ -331,8 +333,8 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
 
             // ─── Stock Movement ─────────────────────────────────────────
             case "stock_movement": {
-                const data = await searchReadOdoo(
-                    "stock.move", [], MOVE_FIELDS, 50, "date DESC"
+                const data = await searchData(
+                    getTables().stockMoves, [], getMoveFields(), 50, `${getField('stockMoves', 'date')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Sistemde stok hareketi bulunamadı.", data: null, ui_component: null };
@@ -340,18 +342,19 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    urun: Array.isArray(r.product_id) ? r.product_id[1] : r.product_id,
-                    miktar: Number(r.quantity ?? 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    kaynak: Array.isArray(r.location_id) ? r.location_id[1] : r.location_id,
-                    hedef: Array.isArray(r.location_dest_id) ? r.location_dest_id[1] : r.location_dest_id,
-                    durum: MOVE_STATE_LABELS[r.state] || r.state,
-                    tarih: r.date
+                    urun: getValue(r, 'stockMoves', 'product'),
+                    miktar: getNumericValue(r, 'stockMoves', 'quantity').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    kaynak: getValue(r, 'stockMoves', 'source'),
+                    hedef: getValue(r, 'stockMoves', 'destination'),
+                    durum: MOVE_STATE_LABELS[getRawValue(r, 'stockMoves', 'status')] || getRawValue(r, 'stockMoves', 'status'),
+                    tarih: r[getField('stockMoves', 'date')]
                 }));
 
                 // State distribution
                 const stateCounts: Record<string, number> = {};
                 data.forEach((r: any) => {
-                    const label = MOVE_STATE_LABELS[r.state] || r.state;
+                    const stateVal = getRawValue(r, 'stockMoves', 'status');
+                    const label = MOVE_STATE_LABELS[stateVal] || stateVal;
                     stateCounts[label] = (stateCounts[label] || 0) + 1;
                 });
 
@@ -372,8 +375,8 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
 
             // ─── Stock Value Analysis ───────────────────────────────────
             case "stock_value": {
-                const data = await searchReadOdoo(
-                    "product.product", [], PRODUCT_FIELDS, 500, "qty_available DESC"
+                const data = await searchData(
+                    getTables().products, [], getProductFields(), 500, `${getField('products', 'quantity')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Stok değeri hesaplanamadı: ürün bulunamadı.", data: null, ui_component: null };
@@ -381,11 +384,11 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
 
                 const enriched = data
                     .map((r: any) => {
-                        const qty = Number(r.qty_available ?? 0);
-                        const price = Number(r.list_price ?? 0);
+                        const qty = getNumericValue(r, 'products', 'quantity');
+                        const price = getNumericValue(r, 'products', 'price');
                         return {
-                            name: r.name,
-                            default_code: r.default_code || '-',
+                            name: r[getField('products', 'name')],
+                            default_code: r[getField('products', 'code')] || '-',
                             qty_available: qty,
                             list_price: price,
                             value: qty * price
@@ -433,8 +436,8 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
 
             // ─── Stock Chart ────────────────────────────────────────────
             case "stock_chart": {
-                const data = await searchReadOdoo(
-                    "product.product", [], PRODUCT_FIELDS, 500, "qty_available DESC"
+                const data = await searchData(
+                    getTables().products, [], getProductFields(), 500, `${getField('products', 'quantity')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Stok grafiği için yeterli veri bulunamadı.", data: null, ui_component: null };
@@ -443,10 +446,13 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                 // Top 15 products by stock quantity for the chart
                 const chartData = data
                     .slice(0, 15)
-                    .map((r: any) => ({
-                        name: r.name.length > 25 ? r.name.substring(0, 25) + '...' : r.name,
-                        stok_miktari: Number(r.qty_available ?? 0)
-                    }))
+                    .map((r: any) => {
+                        const nameVal = r[getField('products', 'name')];
+                        return {
+                            name: nameVal.length > 25 ? nameVal.substring(0, 25) + '...' : nameVal,
+                            stok_miktari: getNumericValue(r, 'products', 'quantity')
+                        };
+                    })
                     .filter((r: any) => r.stok_miktari > 0);
 
                 if (!chartData.length) {
@@ -454,7 +460,7 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                 }
 
                 // Stock distribution buckets
-                const quantities = data.map((r: any) => Number(r.qty_available ?? 0));
+                const quantities = data.map((r: any) => getNumericValue(r, 'products', 'quantity'));
                 const totalProducts = quantities.length;
                 const zeroStock = quantities.filter((q: number) => q <= 0).length;
                 const lowStock = quantities.filter((q: number) => q > 0 && q < CRITICAL_THRESHOLD).length;
@@ -537,7 +543,7 @@ Eğer ürün adı bulunamadıysa {"product_name": null} döndür.`);
 
         if (error.message?.includes("ECONNREFUSED")) {
             return {
-                content: "⚠️ Odoo ERP sistemine bağlanılamıyor. Lütfen Odoo servisinin (localhost:8069) çalıştığından emin olun.",
+                content: getConnectionErrorMessage(),
                 data: null,
                 ui_component: null
             };

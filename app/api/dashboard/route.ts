@@ -1,6 +1,6 @@
 
 import { NextResponse } from "next/server";
-import { countOdoo } from "@/lib/odooClient";
+import { countData, getTables } from "@/lib/dataAccess";
 import { getKpiSummary } from "@/lib/erpoClient";
 
 export async function GET() {
@@ -9,10 +9,10 @@ export async function GET() {
 
         // Parallel requests for speed — Odoo + ERPO
         const [customerCount, orderCount, productCount, quotationCount, erpoData] = await Promise.all([
-            countOdoo('res.partner', [['active', '=', true]]),
-            countOdoo('sale.order', [['state', '=', 'sale']]),
-            countOdoo('product.product', [['active', '=', true]]),
-            countOdoo('sale.order', [['state', '=', 'draft']]),
+            countData(getTables().customers, [['active', '=', true]]),
+            countData(getTables().salesOrders, [['state', '=', 'sale']]),
+            countData(getTables().products, [['active', '=', true]]),
+            countData(getTables().salesOrders, [['state', '=', 'draft']]),
             getKpiSummary().catch(() => null)
         ]);
 

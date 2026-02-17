@@ -1,16 +1,46 @@
 'use client'
 
-import { X, Sun, Moon, LayoutDashboard, Zap, Database, Upload, ChevronRight } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { X, Sun, Moon, LayoutDashboard, Zap, Database, Upload, ChevronRight, Plug, RefreshCw, Loader2, Unplug } from 'lucide-react'
 import { AppSettings } from '@/lib/types/settings'
 import styles from './SettingsPanel.module.css'
+
+interface ConnectionInfo {
+    configured: boolean;
+    connected: boolean;
+    type?: string;
+    label?: string;
+    host?: string;
+    database?: string;
+    tableCount?: number;
+}
 
 interface SettingsPanelProps {
     settings: AppSettings;
     onSettingsChange: (settings: AppSettings) => void;
     onClose: () => void;
+    onOpenConnectionWizard?: () => void;
 }
 
-export default function SettingsPanel({ settings, onSettingsChange, onClose }: SettingsPanelProps) {
+const TYPE_LABELS: Record<string, string> = {
+    odoo: 'Odoo ERP',
+    postgresql: 'PostgreSQL',
+    mysql: 'MySQL',
+    mssql: 'SQL Server',
+    sqlite: 'SQLite',
+};
+
+export default function SettingsPanel({ settings, onSettingsChange, onClose, onOpenConnectionWizard }: SettingsPanelProps) {
+    const [connectionInfo, setConnectionInfo] = useState<ConnectionInfo | null>(null);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const [isDisconnecting, setIsDisconnecting] = useState(false);
+
+    useEffect(() => {
+        fetch('/api/connection')
+            .then(res => res.json())
+            .then(data => setConnectionInfo(data))
+            .catch(() => setConnectionInfo({ configured: false, connected: false }));
+    }, []);
 
     const updateSetting = <K extends keyof AppSettings>(
         category: K,
@@ -27,6 +57,31 @@ export default function SettingsPanel({ settings, onSettingsChange, onClose }: S
         onSettingsChange(updated);
     };
 
+    const handleRefreshSchema = async () => {
+        setIsRefreshing(true);
+        try {
+            const res = await fetch('/api/schema?action=refresh');
+            const data = await res.json();
+            if (data.success) {
+                setConnectionInfo(prev => prev ? { ...prev, tableCount: data.tableCount } : prev);
+            }
+        } catch { /* ignore */ }
+        finally { setIsRefreshing(false); }
+    };
+
+    const handleDisconnect = async () => {
+        setIsDisconnecting(true);
+        try {
+            await fetch('/api/connection', { method: 'DELETE' });
+            setConnectionInfo({ configured: false, connected: false });
+            onSettingsChange({
+                ...settings,
+                connection: { ...settings.connection, configured: false }
+            });
+        } catch { /* ignore */ }
+        finally { setIsDisconnecting(false); }
+    };
+
     return (
         <div className={styles.overlay} onClick={onClose}>
             <div className={styles.panel} onClick={(e) => e.stopPropagation()}>
@@ -38,6 +93,61 @@ export default function SettingsPanel({ settings, onSettingsChange, onClose }: S
                 </div>
 
                 <div className={styles.content}>
+                    {/* BAGLANTI */}
+                    <div className={styles.category}>
+                        <div className={styles.categoryHeader}>
+                            <Plug size={16} />
+                            <span>Baglanti</span>
+                        </div>
+
+                        {connectionInfo?.connected ? (
+                            <>
+                                <div className={styles.settingItem}>
+                                    <div className={styles.settingInfo}>
+                                        <span className={styles.settingLabel}>
+                                            {connectionInfo.label || TYPE_LABELS[connectionInfo.type || ''] || 'Bagli'}
+                                        </span>
+                                        <span className={styles.settingDesc}>
+                                            {connectionInfo.type ? TYPE_LABELS[connectionInfo.type] : ''} — {connectionInfo.host || ''}/{connectionInfo.database || ''}
+                                            {connectionInfo.tableCount ? ` (${connectionInfo.tableCount} tablo)` : ''}
+                                        </span>
+                                    </div>
+                                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#10b981', flexShrink: 0 }} />
+                                </div>
+
+                                <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                                    {onOpenConnectionWizard && (
+                                        <button className={styles.actionButton} onClick={() => { onClose(); onOpenConnectionWizard(); }}>
+                                            <Database size={14} />
+                                            Degistir
+                                        </button>
+                                    )}
+                                    <button className={styles.actionButton} onClick={handleRefreshSchema} disabled={isRefreshing}>
+                                        {isRefreshing ? <Loader2 size={14} className={styles.spinIcon} /> : <RefreshCw size={14} />}
+                                        Semalari Yenile
+                                    </button>
+                                    <button className={`${styles.actionButton} ${styles.actionButtonDanger}`} onClick={handleDisconnect} disabled={isDisconnecting}>
+                                        {isDisconnecting ? <Loader2 size={14} className={styles.spinIcon} /> : <Unplug size={14} />}
+                                        Kes
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <div className={styles.settingItem}>
+                                <div className={styles.settingInfo}>
+                                    <span className={styles.settingLabel}>Bagli Degil</span>
+                                    <span className={styles.settingDesc}>Veritabani veya ERP sisteminize baglanin</span>
+                                </div>
+                                {onOpenConnectionWizard && (
+                                    <button className={styles.connectButton} onClick={() => { onClose(); onOpenConnectionWizard(); }}>
+                                        <Plug size={14} />
+                                        Baglan
+                                    </button>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
                     {/* GORUNUM */}
                     <div className={styles.category}>
                         <div className={styles.categoryHeader}>
@@ -110,14 +220,14 @@ export default function SettingsPanel({ settings, onSettingsChange, onClose }: S
                     {/* VERI ISLEMLERI */}
                     <div className={styles.category}>
                         <div className={styles.categoryHeader}>
-                            <Database size={16} />
+                            <Zap size={16} />
                             <span>Veri Islemleri</span>
                         </div>
 
                         <div className={styles.settingItem}>
                             <div className={styles.settingInfo}>
                                 <span className={styles.settingLabel}>Yazma Islevi</span>
-                                <span className={styles.settingDesc}>Odoo&apos;da veri olusturma/guncelleme izni ver (siparis onaylama, kayit ekleme vb.)</span>
+                                <span className={styles.settingDesc}>Veritabaninda veri olusturma/guncelleme izni ver</span>
                             </div>
                             <label className={styles.toggle}>
                                 <input
@@ -131,7 +241,7 @@ export default function SettingsPanel({ settings, onSettingsChange, onClose }: S
 
                         {settings.dataOperations.writeEnabled && (
                             <div className={styles.warningBox}>
-                                <span>Dikkat: Yazma islevi aktif. Agent&apos;lar Odoo veritabaninda degisiklik yapabilir.</span>
+                                <span>Dikkat: Yazma islevi aktif. Agent&apos;lar veritabaninda degisiklik yapabilir.</span>
                             </div>
                         )}
                     </div>

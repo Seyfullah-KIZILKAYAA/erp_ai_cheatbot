@@ -14,7 +14,7 @@ import { processAnalyticsQuery } from "@/lib/agents/analyticsAgent";
 import { MemoryService } from "@/lib/services/memoryService";
 import { Entity } from "@/lib/types/memory";
 import { PendingWriteAction } from "@/lib/types/writeConfirmation";
-import { createOdoo, writeOdoo, searchReadOdoo } from "@/lib/odooClient";
+import { searchData, createRecord, updateRecord, getTables } from "@/lib/dataAccess";
 
 /**
  * Extract entities from agent response data and store in memory
@@ -23,23 +23,23 @@ function extractEntitiesFromResponse(agentResponse: any, agentKey: string, sessi
     if (!agentResponse.data || !Array.isArray(agentResponse.data)) return;
 
     const typeMap: Record<string, Entity['type']> = {
-        'res.partner': 'customer',
-        'product.product': 'product',
-        'sale.order': 'order',
-        'account.move': 'invoice',
-        'hr.employee': 'employee',
-        'crm.lead': 'opportunity',
-        'purchase.order': 'order'
+        [getTables().customers]: 'customer',
+        [getTables().products]: 'product',
+        [getTables().salesOrders]: 'order',
+        [getTables().invoices]: 'invoice',
+        [getTables().employees]: 'employee',
+        [getTables().crmLeads]: 'opportunity',
+        [getTables().purchaseOrders]: 'order'
     };
 
     // Infer table name from agent key or data
     let tableName = '';
-    if (agentKey === 'sales') tableName = agentResponse.data[0]?.partner_id ? 'res.partner' : 'sale.order';
-    if (agentKey === 'finance') tableName = 'account.move';
-    if (agentKey === 'inventory') tableName = 'product.product';
-    if (agentKey === 'purchasing') tableName = 'purchase.order';
-    if (agentKey === 'hr') tableName = 'hr.employee';
-    if (agentKey === 'crm') tableName = 'crm.lead';
+    if (agentKey === 'sales') tableName = agentResponse.data[0]?.partner_id ? getTables().customers : getTables().salesOrders;
+    if (agentKey === 'finance') tableName = getTables().invoices;
+    if (agentKey === 'inventory') tableName = getTables().products;
+    if (agentKey === 'purchasing') tableName = getTables().purchaseOrders;
+    if (agentKey === 'hr') tableName = getTables().employees;
+    if (agentKey === 'crm') tableName = getTables().crmLeads;
 
     const entityType = typeMap[tableName];
     if (!entityType) return;
@@ -62,8 +62,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
     try {
         switch (action.actionType) {
             case 'create_customer': {
-                const newId = await createOdoo('res.partner', action.values);
-                const created = await searchReadOdoo('res.partner', [['id', '=', newId]],
+                const newId = await createRecord(getTables().customers, action.values);
+                const created = await searchData(getTables().customers, [['id', '=', newId]],
                     ['id', 'name', 'email', 'phone', 'city', 'is_company'], 1);
                 return {
                     role: 'bot',
@@ -76,7 +76,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
             case 'create_employee': {
                 const values = { ...action.values };
                 if (values.department_name) {
-                    const depts = await searchReadOdoo('hr.department',
+                    const depts = await searchData(getTables().departments,
                         [['name', 'ilike', values.department_name]], ['id', 'name'], 1);
                     if (depts?.length) {
                         values.department_id = depts[0].id;
@@ -84,15 +84,15 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                     delete values.department_name;
                 }
                 if (values.company_name) {
-                    const companies = await searchReadOdoo('res.company',
+                    const companies = await searchData(getTables().companies,
                         [['name', 'ilike', values.company_name]], ['id', 'name'], 1);
                     if (companies?.length) {
                         values.company_id = companies[0].id;
                     }
                     delete values.company_name;
                 }
-                const newId = await createOdoo('hr.employee', values);
-                const created = await searchReadOdoo('hr.employee', [['id', '=', newId]],
+                const newId = await createRecord(getTables().employees, values);
+                const created = await searchData(getTables().employees, [['id', '=', newId]],
                     ['id', 'name', 'work_email', 'mobile_phone', 'department_id', 'job_title', 'company_id'], 1);
                 return {
                     role: 'bot',
@@ -108,7 +108,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 delete values.employee_name;
 
                 // Find the employee
-                const employees = await searchReadOdoo('hr.employee',
+                const employees = await searchData(getTables().employees,
                     [['name', 'ilike', employeeName]], ['id', 'name'], 1);
                 if (!employees?.length) {
                     return {
@@ -120,7 +120,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
 
                 // Resolve company_name -> company_id
                 if (values.company_name) {
-                    const companies = await searchReadOdoo('res.company',
+                    const companies = await searchData(getTables().companies,
                         [['name', 'ilike', values.company_name]], ['id', 'name'], 1);
                     if (companies?.length) {
                         values.company_id = companies[0].id;
@@ -136,7 +136,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
 
                 // Resolve department_name -> department_id
                 if (values.department_name) {
-                    const depts = await searchReadOdoo('hr.department',
+                    const depts = await searchData(getTables().departments,
                         [['name', 'ilike', values.department_name]], ['id', 'name'], 1);
                     if (depts?.length) {
                         values.department_id = depts[0].id;
@@ -144,8 +144,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                     delete values.department_name;
                 }
 
-                await writeOdoo('hr.employee', [employees[0].id], values);
-                const updated = await searchReadOdoo('hr.employee', [['id', '=', employees[0].id]],
+                await updateRecord(getTables().employees, [employees[0].id], values);
+                const updated = await searchData(getTables().employees, [['id', '=', employees[0].id]],
                     ['id', 'name', 'work_email', 'mobile_phone', 'department_id', 'job_title', 'company_id'], 1);
                 return {
                     role: 'bot',
@@ -156,8 +156,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 };
             }
             case 'create_product': {
-                const newId = await createOdoo('product.product', action.values);
-                const created = await searchReadOdoo('product.product', [['id', '=', newId]],
+                const newId = await createRecord(getTables().products, action.values);
+                const created = await searchData(getTables().products, [['id', '=', newId]],
                     ['id', 'name', 'qty_available', 'list_price', 'default_code'], 1);
                 return {
                     role: 'bot',
@@ -168,7 +168,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 };
             }
             case 'create_order': {
-                const partners = await searchReadOdoo('res.partner',
+                const partners = await searchData(getTables().customers,
                     [['name', 'ilike', action.values.partner_name]], ['id', 'name'], 1);
                 if (!partners?.length) {
                     return {
@@ -177,8 +177,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                         data: null, ui_component: null
                     };
                 }
-                const newId = await createOdoo('sale.order', { partner_id: partners[0].id });
-                const created = await searchReadOdoo('sale.order', [['id', '=', newId]],
+                const newId = await createRecord(getTables().salesOrders, { partner_id: partners[0].id });
+                const created = await searchData(getTables().salesOrders, [['id', '=', newId]],
                     ['id', 'name', 'partner_id', 'amount_total', 'state', 'date_order'], 1);
                 return {
                     role: 'bot',
@@ -189,7 +189,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 };
             }
             case 'create_invoice': {
-                const partners = await searchReadOdoo('res.partner',
+                const partners = await searchData(getTables().customers,
                     [['name', 'ilike', action.values.partner_name]], ['id', 'name'], 1);
                 if (!partners?.length) {
                     return {
@@ -198,8 +198,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                         data: null, ui_component: null
                     };
                 }
-                const newId = await createOdoo('account.move', { partner_id: partners[0].id, move_type: 'out_invoice' });
-                const created = await searchReadOdoo('account.move', [['id', '=', newId]],
+                const newId = await createRecord(getTables().invoices, { partner_id: partners[0].id, move_type: 'out_invoice' });
+                const created = await searchData(getTables().invoices, [['id', '=', newId]],
                     ['id', 'name', 'partner_id', 'amount_total', 'payment_state', 'state', 'invoice_date'], 1);
                 return {
                     role: 'bot',
@@ -210,7 +210,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 };
             }
             case 'create_purchase': {
-                const vendors = await searchReadOdoo('res.partner',
+                const vendors = await searchData(getTables().customers,
                     [['name', 'ilike', action.values.partner_name], ['is_company', '=', true]], ['id', 'name'], 1);
                 if (!vendors?.length) {
                     return {
@@ -219,8 +219,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                         data: null, ui_component: null
                     };
                 }
-                const newId = await createOdoo('purchase.order', { partner_id: vendors[0].id });
-                const created = await searchReadOdoo('purchase.order', [['id', '=', newId]],
+                const newId = await createRecord(getTables().purchaseOrders, { partner_id: vendors[0].id });
+                const created = await searchData(getTables().purchaseOrders, [['id', '=', newId]],
                     ['id', 'name', 'partner_id', 'amount_total', 'state', 'date_order'], 1);
                 return {
                     role: 'bot',
@@ -233,13 +233,13 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
             case 'create_lead': {
                 const values = { ...action.values };
                 if (values.partner_name) {
-                    const partners = await searchReadOdoo('res.partner',
+                    const partners = await searchData(getTables().customers,
                         [['name', 'ilike', values.partner_name]], ['id'], 1);
                     if (partners?.length) values.partner_id = partners[0].id;
                     delete values.partner_name;
                 }
-                const newId = await createOdoo('crm.lead', values);
-                const created = await searchReadOdoo('crm.lead', [['id', '=', newId]],
+                const newId = await createRecord(getTables().crmLeads, values);
+                const created = await searchData(getTables().crmLeads, [['id', '=', newId]],
                     ['id', 'name', 'partner_id', 'stage_id', 'probability', 'expected_revenue'], 1);
                 return {
                     role: 'bot',
@@ -250,7 +250,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 };
             }
             case 'confirm_order': {
-                const orders = await searchReadOdoo('sale.order',
+                const orders = await searchData(getTables().salesOrders,
                     [['name', 'ilike', action.values.order_name], ['state', '=', 'draft']],
                     ['id', 'name', 'partner_id', 'amount_total', 'state', 'date_order'], 1);
                 if (!orders?.length) {
@@ -260,7 +260,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                         data: null, ui_component: null
                     };
                 }
-                await writeOdoo('sale.order', [orders[0].id], { state: 'sale' });
+                await updateRecord(getTables().salesOrders, [orders[0].id], { state: 'sale' });
                 return {
                     role: 'bot',
                     content: `## ✅ Sipariş Onaylandı!\n\n**${orders[0].name}** siparişi başarıyla onaylandı.`,
@@ -273,7 +273,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 const customerName = values.customer_name;
                 delete values.customer_name;
 
-                const customers = await searchReadOdoo('res.partner',
+                const customers = await searchData(getTables().customers,
                     [['name', 'ilike', customerName]], ['id', 'name'], 1);
                 if (!customers?.length) {
                     return {
@@ -283,8 +283,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                     };
                 }
 
-                await writeOdoo('res.partner', [customers[0].id], values);
-                const updated = await searchReadOdoo('res.partner', [['id', '=', customers[0].id]],
+                await updateRecord(getTables().customers, [customers[0].id], values);
+                const updated = await searchData(getTables().customers, [['id', '=', customers[0].id]],
                     ['id', 'name', 'email', 'phone', 'city', 'is_company'], 1);
                 return {
                     role: 'bot',
@@ -298,7 +298,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 const productName = values.product_name;
                 delete values.product_name;
 
-                const products = await searchReadOdoo('product.product',
+                const products = await searchData(getTables().products,
                     [['name', 'ilike', productName]], ['id', 'name'], 1);
                 if (!products?.length) {
                     return {
@@ -308,8 +308,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                     };
                 }
 
-                await writeOdoo('product.product', [products[0].id], values);
-                const updated = await searchReadOdoo('product.product', [['id', '=', products[0].id]],
+                await updateRecord(getTables().products, [products[0].id], values);
+                const updated = await searchData(getTables().products, [['id', '=', products[0].id]],
                     ['id', 'name', 'qty_available', 'list_price', 'default_code'], 1);
                 return {
                     role: 'bot',
@@ -323,7 +323,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 const invoiceName = values.invoice_name;
                 delete values.invoice_name;
 
-                const invoices = await searchReadOdoo('account.move',
+                const invoices = await searchData(getTables().invoices,
                     [['name', 'ilike', invoiceName]], ['id', 'name'], 1);
                 if (!invoices?.length) {
                     return {
@@ -335,7 +335,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
 
                 // Resolve partner_name -> partner_id
                 if (values.partner_name) {
-                    const partners = await searchReadOdoo('res.partner',
+                    const partners = await searchData(getTables().customers,
                         [['name', 'ilike', values.partner_name]], ['id', 'name'], 1);
                     if (partners?.length) {
                         values.partner_id = partners[0].id;
@@ -349,8 +349,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                     delete values.partner_name;
                 }
 
-                await writeOdoo('account.move', [invoices[0].id], values);
-                const updated = await searchReadOdoo('account.move', [['id', '=', invoices[0].id]],
+                await updateRecord(getTables().invoices, [invoices[0].id], values);
+                const updated = await searchData(getTables().invoices, [['id', '=', invoices[0].id]],
                     ['id', 'name', 'partner_id', 'amount_total', 'payment_state', 'state', 'invoice_date'], 1);
                 return {
                     role: 'bot',
@@ -364,7 +364,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 const poName = values.po_name;
                 delete values.po_name;
 
-                const pos = await searchReadOdoo('purchase.order',
+                const pos = await searchData(getTables().purchaseOrders,
                     [['name', 'ilike', poName]], ['id', 'name'], 1);
                 if (!pos?.length) {
                     return {
@@ -376,7 +376,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
 
                 // Resolve partner_name -> partner_id
                 if (values.partner_name) {
-                    const vendors = await searchReadOdoo('res.partner',
+                    const vendors = await searchData(getTables().customers,
                         [['name', 'ilike', values.partner_name], ['is_company', '=', true]], ['id', 'name'], 1);
                     if (vendors?.length) {
                         values.partner_id = vendors[0].id;
@@ -390,8 +390,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                     delete values.partner_name;
                 }
 
-                await writeOdoo('purchase.order', [pos[0].id], values);
-                const updated = await searchReadOdoo('purchase.order', [['id', '=', pos[0].id]],
+                await updateRecord(getTables().purchaseOrders, [pos[0].id], values);
+                const updated = await searchData(getTables().purchaseOrders, [['id', '=', pos[0].id]],
                     ['id', 'name', 'partner_id', 'amount_total', 'state', 'date_order'], 1);
                 return {
                     role: 'bot',
@@ -405,7 +405,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                 const leadName = values.lead_name;
                 delete values.lead_name;
 
-                const leads = await searchReadOdoo('crm.lead',
+                const leads = await searchData(getTables().crmLeads,
                     [['name', 'ilike', leadName]], ['id', 'name'], 1);
                 if (!leads?.length) {
                     return {
@@ -417,7 +417,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
 
                 // Resolve partner_name -> partner_id
                 if (values.partner_name) {
-                    const partners = await searchReadOdoo('res.partner',
+                    const partners = await searchData(getTables().customers,
                         [['name', 'ilike', values.partner_name]], ['id', 'name'], 1);
                     if (partners?.length) {
                         values.partner_id = partners[0].id;
@@ -427,7 +427,7 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
 
                 // Resolve stage_name -> stage_id
                 if (values.stage_name) {
-                    const stages = await searchReadOdoo('crm.stage',
+                    const stages = await searchData(getTables().crmStages,
                         [['name', 'ilike', values.stage_name]], ['id', 'name'], 1);
                     if (stages?.length) {
                         values.stage_id = stages[0].id;
@@ -435,8 +435,8 @@ async function executeConfirmedWrite(action: PendingWriteAction) {
                     delete values.stage_name;
                 }
 
-                await writeOdoo('crm.lead', [leads[0].id], values);
-                const updated = await searchReadOdoo('crm.lead', [['id', '=', leads[0].id]],
+                await updateRecord(getTables().crmLeads, [leads[0].id], values);
+                const updated = await searchData(getTables().crmLeads, [['id', '=', leads[0].id]],
                     ['id', 'name', 'partner_id', 'stage_id', 'probability', 'expected_revenue'], 1);
                 return {
                     role: 'bot',

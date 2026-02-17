@@ -3,7 +3,7 @@
 /**
  * SALES AGENT
  * Specialized in sales orders, quotations, customer relationships, and revenue analysis.
- * Connects to Odoo ERP via XML-RPC for real-time data.
+ * Connects to the active data source for real-time data.
  *
  * Intent-based architecture:
  * - order_list: Satış siparişlerini listele
@@ -16,7 +16,7 @@
  * - revenue_chart: Gelir dağılımı grafiği
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getEntitySchemaContext, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -38,8 +38,9 @@ type SalesIntent =
     | "create_order"
     | "confirm_order";
 
-const SALE_ORDER_FIELDS = ["id", "name", "partner_id", "amount_total", "state", "date_order"];
-const PARTNER_FIELDS = ["id", "name", "email", "phone", "city", "is_company"];
+// Dynamic field resolution - adapts to connected database
+const getSaleOrderFields = () => getFields('salesOrders', ['id', 'name', 'customer', 'totalAmount', 'status', 'date']);
+const getPartnerFields = () => getFields('customers', ['id', 'name', 'email', 'phone', 'city', 'isCompany']);
 
 const STATE_LABELS: Record<string, string> = {
     draft: "Taslak",
@@ -97,8 +98,9 @@ export async function processSalesQuery(userQuery: string, history: any[], write
     }
 
     // --- LLM-based intent detection for ambiguous queries ---
+    const connLabel = getConnectionLabel();
     const systemPrompt = `
-    Sen bir **Satış Departmanı AI Uzmanısın**. Odoo ERP sisteminde satış siparişleri, müşteri verileri ve gelir analizlerini yönetiyorsun.
+    Sen bir **Satış Departmanı AI Uzmanısın**. ${connLabel} sisteminde satış siparişleri, müşteri verileri ve gelir analizlerini yönetiyorsun.
 
     MEVCUT ANALİZ TÜRLERİ:
     1. "order_list" → Satış siparişlerini listele
@@ -238,8 +240,8 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
     try {
         switch (intent) {
             case "order_list": {
-                const data = await searchReadOdoo(
-                    "sale.order", [], SALE_ORDER_FIELDS, 50, "date_order DESC"
+                const data = await searchData(
+                    getTables().salesOrders, [], getSaleOrderFields(), 50, `${getField('salesOrders', 'date')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Sistemde satış siparişi bulunamadı.", data: null, ui_component: null };
@@ -247,14 +249,14 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    siparis: r.name,
-                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : r.partner_id,
-                    tutar: Number(r.amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    durum: STATE_LABELS[r.state] || r.state,
-                    tarih: r.date_order
+                    siparis: getValue(r, 'salesOrders', 'name'),
+                    musteri: getValue(r, 'salesOrders', 'customer'),
+                    tutar: getNumericValue(r, 'salesOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    durum: STATE_LABELS[getRawValue(r, 'salesOrders', 'status')] || getValue(r, 'salesOrders', 'status'),
+                    tarih: getValue(r, 'salesOrders', 'date')
                 }));
 
-                const total = data.reduce((s: number, r: any) => s + Number(r.amount_total || 0), 0);
+                const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'salesOrders', 'totalAmount'), 0);
 
                 return {
                     content:
@@ -268,17 +270,17 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
 
             case "order_summary": {
                 const [totalOrders, confirmedOrders, draftOrders, cancelledOrders] = await Promise.all([
-                    countOdoo("sale.order", []),
-                    countOdoo("sale.order", [["state", "=", "sale"]]),
-                    countOdoo("sale.order", [["state", "=", "draft"]]),
-                    countOdoo("sale.order", [["state", "=", "cancel"]])
+                    countData(getTables().salesOrders, []),
+                    countData(getTables().salesOrders, [[getField('salesOrders', 'status'), "=", "sale"]]),
+                    countData(getTables().salesOrders, [[getField('salesOrders', 'status'), "=", "draft"]]),
+                    countData(getTables().salesOrders, [[getField('salesOrders', 'status'), "=", "cancel"]])
                 ]);
 
-                const recentOrders = await searchReadOdoo(
-                    "sale.order", [["state", "=", "sale"]], ["amount_total"], 500, ""
+                const recentOrders = await searchData(
+                    getTables().salesOrders, [[getField('salesOrders', 'status'), "=", "sale"]], [getField('salesOrders', 'totalAmount')], 500, ""
                 );
 
-                const amounts = (recentOrders || []).map((r: any) => Number(r.amount_total || 0));
+                const amounts = (recentOrders || []).map((r: any) => getNumericValue(r, 'salesOrders', 'totalAmount'));
                 const totalRevenue = amounts.reduce((a: number, b: number) => a + b, 0);
                 const avgOrder = amounts.length ? totalRevenue / amounts.length : 0;
                 const maxOrder = amounts.length ? Math.max(...amounts) : 0;
@@ -303,29 +305,29 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
             }
 
             case "customer_list": {
-                const data = await searchReadOdoo(
-                    "res.partner", [], PARTNER_FIELDS, 100, "name ASC"
+                const data = await searchData(
+                    getTables().customers, [], getPartnerFields(), 100, `${getField('customers', 'name')} ASC`
                 );
                 if (!data?.length) {
                     return { content: "Sistemde müşteri kaydı bulunamadı.", data: null, ui_component: null };
                 }
 
-                const companyCount = data.filter((r: any) => r.is_company).length;
+                const companyCount = data.filter((r: any) => getRawValue(r, 'customers', 'isCompany')).length;
                 const individualCount = data.length - companyCount;
                 const cityCounts: Record<string, number> = {};
                 data.forEach((r: any) => {
-                    const city = r.city || 'Belirtilmemiş';
+                    const city = getValue(r, 'customers', 'city', 'Belirtilmemiş');
                     cityCounts[city] = (cityCounts[city] || 0) + 1;
                 });
                 const topCity = Object.entries(cityCounts).sort((a, b) => b[1] - a[1])[0];
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    ad: r.name,
-                    email: r.email || '-',
-                    telefon: r.phone || '-',
-                    sehir: r.city || '-',
-                    tip: r.is_company ? 'Şirket' : 'Bireysel'
+                    ad: getValue(r, 'customers', 'name'),
+                    email: getValue(r, 'customers', 'email'),
+                    telefon: getValue(r, 'customers', 'phone'),
+                    sehir: getValue(r, 'customers', 'city'),
+                    tip: getRawValue(r, 'customers', 'isCompany') ? 'Şirket' : 'Bireysel'
                 }));
 
                 return {
@@ -343,21 +345,21 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
 
             case "customer_search": {
                 const term = searchTerm || userQuery;
-                const data = await searchReadOdoo(
-                    "res.partner",
-                    [["name", "ilike", term]],
-                    PARTNER_FIELDS, 20, "name ASC"
+                const data = await searchData(
+                    getTables().customers,
+                    [[getField('customers', 'name'), "ilike", term]],
+                    getPartnerFields(), 20, `${getField('customers', 'name')} ASC`
                 );
                 if (!data?.length) {
                     return { content: `"${term}" ile eşleşen müşteri bulunamadı.`, data: null, ui_component: null };
                 }
 
                 const tableData = data.map((r: any) => ({
-                    ad: r.name,
-                    email: r.email || '-',
-                    telefon: r.phone || '-',
-                    sehir: r.city || '-',
-                    tip: r.is_company ? 'Şirket' : 'Bireysel'
+                    ad: getValue(r, 'customers', 'name'),
+                    email: getValue(r, 'customers', 'email'),
+                    telefon: getValue(r, 'customers', 'phone'),
+                    sehir: getValue(r, 'customers', 'city'),
+                    tip: getRawValue(r, 'customers', 'isCompany') ? 'Şirket' : 'Bireysel'
                 }));
 
                 return {
@@ -368,23 +370,23 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
             }
 
             case "quotation_list": {
-                const data = await searchReadOdoo(
-                    "sale.order",
-                    [["state", "=", "draft"]],
-                    SALE_ORDER_FIELDS, 50, "date_order DESC"
+                const data = await searchData(
+                    getTables().salesOrders,
+                    [[getField('salesOrders', 'status'), "=", "draft"]],
+                    getSaleOrderFields(), 50, `${getField('salesOrders', 'date')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Sistemde taslak teklif bulunmuyor.", data: null, ui_component: null };
                 }
 
-                const total = data.reduce((s: number, r: any) => s + Number(r.amount_total || 0), 0);
+                const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'salesOrders', 'totalAmount'), 0);
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    teklif: r.name,
-                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : r.partner_id,
-                    tutar: Number(r.amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    tarih: r.date_order
+                    teklif: getValue(r, 'salesOrders', 'name'),
+                    musteri: getValue(r, 'salesOrders', 'customer'),
+                    tutar: getNumericValue(r, 'salesOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    tarih: getValue(r, 'salesOrders', 'date')
                 }));
 
                 return {
@@ -399,10 +401,10 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
             }
 
             case "top_orders": {
-                const data = await searchReadOdoo(
-                    "sale.order",
-                    [["state", "=", "sale"]],
-                    SALE_ORDER_FIELDS, 10, "amount_total DESC"
+                const data = await searchData(
+                    getTables().salesOrders,
+                    [[getField('salesOrders', 'status'), "=", "sale"]],
+                    getSaleOrderFields(), 10, `${getField('salesOrders', 'totalAmount')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Onaylı satış siparişi bulunamadı.", data: null, ui_component: null };
@@ -410,17 +412,17 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    siparis: r.name,
-                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : r.partner_id,
-                    tutar: Number(r.amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
-                    tarih: r.date_order
+                    siparis: getValue(r, 'salesOrders', 'name'),
+                    musteri: getValue(r, 'salesOrders', 'customer'),
+                    tutar: getNumericValue(r, 'salesOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
+                    tarih: getValue(r, 'salesOrders', 'date')
                 }));
 
                 return {
                     content:
                         `## 🏆 En Yüksek Tutarlı Siparişler (Top 10)\n\n` +
-                        `En büyük sipariş: **${data[0].name}** — ` +
-                        `**${Number(data[0].amount_total).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**`,
+                        `En büyük sipariş: **${getValue(data[0], 'salesOrders', 'name')}** — ` +
+                        `**${getNumericValue(data[0], 'salesOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**`,
                     data: tableData,
                     ui_component: 'table'
                 };
@@ -429,7 +431,7 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
             case "order_status": {
                 const states = ["draft", "sent", "sale", "done", "cancel"];
                 const counts = await Promise.all(
-                    states.map(s => countOdoo("sale.order", [["state", "=", s]]))
+                    states.map(s => countData(getTables().salesOrders, [[getField('salesOrders', 'status'), "=", s]]))
                 );
 
                 const chartData = states.map((s, i) => ({
@@ -453,10 +455,10 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
             }
 
             case "revenue_chart": {
-                const data = await searchReadOdoo(
-                    "sale.order",
-                    [["state", "=", "sale"]],
-                    ["partner_id", "amount_total"], 100, "amount_total DESC"
+                const data = await searchData(
+                    getTables().salesOrders,
+                    [[getField('salesOrders', 'status'), "=", "sale"]],
+                    [getField('salesOrders', 'customer'), getField('salesOrders', 'totalAmount')], 100, `${getField('salesOrders', 'totalAmount')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Gelir grafiği için yeterli veri bulunamadı.", data: null, ui_component: null };
@@ -465,8 +467,8 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
                 // Müşteri bazlı gelir grupla
                 const revenueByCustomer: Record<string, number> = {};
                 data.forEach((r: any) => {
-                    const name = Array.isArray(r.partner_id) ? r.partner_id[1] : String(r.partner_id);
-                    revenueByCustomer[name] = (revenueByCustomer[name] || 0) + Number(r.amount_total || 0);
+                    const name = getValue(r, 'salesOrders', 'customer');
+                    revenueByCustomer[name] = (revenueByCustomer[name] || 0) + getNumericValue(r, 'salesOrders', 'totalAmount');
                 });
 
                 const chartData = Object.entries(revenueByCustomer)
@@ -586,7 +588,7 @@ Eğer müşteri adı bulunamadıysa {"customer_name": null} döndür.`);
 
         if (error.message?.includes("ECONNREFUSED")) {
             return {
-                content: "⚠️ Odoo ERP sistemine bağlanılamıyor. Lütfen Odoo servisinin (localhost:8069) çalıştığından emin olun.",
+                content: getConnectionErrorMessage(),
                 data: null,
                 ui_component: null
             };

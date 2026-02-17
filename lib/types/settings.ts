@@ -9,6 +9,12 @@ export interface AppSettings {
     theme: 'dark' | 'light';
   };
 
+  // Baglanti (Connection)
+  connection: {
+    configured: boolean;
+    rememberCredentials: boolean;
+  };
+
   // Dashboard
   dashboard: {
     showLivePanel: boolean;
@@ -30,6 +36,10 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: {
     theme: 'dark',
+  },
+  connection: {
+    configured: false,
+    rememberCredentials: true,
   },
   dashboard: {
     showLivePanel: true,

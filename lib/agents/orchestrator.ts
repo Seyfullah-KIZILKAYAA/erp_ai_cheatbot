@@ -3,7 +3,10 @@
 /**
  * ORCHESTRATOR AGENT
  * Routes user queries to the appropriate specialized agent(s)
+ * Now schema-aware: includes connected database info in LLM prompt.
  */
+
+import { getSchemaContextForLLM, getConnectionLabel } from "@/lib/dataAccess";
 
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
@@ -20,9 +23,22 @@ export interface AgentRoute {
 }
 
 export async function routeToAgent(userQuery: string, history: any[]): Promise<AgentRoute> {
+    // Get schema context dynamically
+    let schemaContext = '';
+    let connLabel = 'ERP/Veritabanı';
+    try {
+        schemaContext = await getSchemaContextForLLM();
+        connLabel = getConnectionLabel();
+    } catch {
+        schemaContext = 'Şema bilgisi mevcut değil.';
+    }
+
     const systemPrompt = `
     Sen bir **Multi-Agent ERP AI Orchestrator** sinir merkezisin.
     Görevin, kullanıcıdan gelen doğal dil sorgularını analiz etmek ve bunları en uygun uzman departman ajanlarına (Agents) yönlendirmektir.
+
+    BAĞLI VERİ KAYNAĞI: ${connLabel}
+    ${schemaContext}
 
     GÖRSEL MİMARİDEKİ AJANLARIN VE SORUMLULUKLARI:
     1. **CRM Agent**: Adaylar (Leads), Müşteri Temasları (Contacts), Fırsatlar (Opportunities), Satış Hunisi, CRM Fırsatları.
@@ -63,7 +79,7 @@ export async function routeToAgent(userQuery: string, history: any[]): Promise<A
         "agents": ["finance"],
         "confidence": 95,
         "analysis": "Kullanıcı ödenmemiş faturaları sorduğu için Finans departmanı görevlendirildi.",
-        "reasoning": "account.move tablosundaki ödeme durumu 'not_paid' olan kayıtları inceleyeceğiz."
+        "reasoning": "Fatura tablosundaki ödeme durumu 'not_paid' olan kayıtları inceleyeceğiz."
     }
     `;
 

@@ -14,7 +14,7 @@
  * - stage_analysis: Aşama bazlı analiz (chart)
  */
 
-import { searchReadOdoo, countOdoo } from "@/lib/odooClient";
+import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -33,7 +33,8 @@ type CrmIntent =
     | "create_lead"
     | "update_lead";
 
-const LEAD_FIELDS = ["id", "name", "partner_id", "stage_id", "probability", "expected_revenue"];
+// Dynamic field resolution
+const getLeadFields = () => getFields('crmLeads', ['id', 'name', 'customer', 'stage', 'probability', 'expectedRevenue']);
 
 export async function processCrmQuery(userQuery: string, history: any[], writeEnabled: boolean = false) {
     const lower = userQuery.toLowerCase();
@@ -71,8 +72,9 @@ export async function processCrmQuery(userQuery: string, history: any[], writeEn
     }
 
     // --- LLM-based intent detection ---
+    const connLabel = getConnectionLabel();
     const systemPrompt = `
-    Sen bir **Müşteri İlişkileri (CRM) AI Uzmanısın**. Odoo ERP'de adaylar, fırsatlar ve satış hunisini analiz ediyorsun.
+    Sen bir **Müşteri İlişkileri (CRM) AI Uzmanısın**. ${connLabel}'de adaylar, fırsatlar ve satış hunisini analiz ediyorsun.
 
     MEVCUT ANALİZ TÜRLERİ:
     1. "opportunity_list" → Fırsat listesi
@@ -147,20 +149,20 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
     try {
         switch (intent) {
             case "opportunity_list": {
-                const data = await searchReadOdoo("crm.lead", [], LEAD_FIELDS, 50, "probability DESC");
+                const data = await searchData(getTables().crmLeads, [], getLeadFields(), 50, `${getField('crmLeads', 'probability')} DESC`);
                 if (!data?.length) {
                     return { content: "Sistemde CRM fırsatı bulunamadı.", data: null, ui_component: null };
                 }
 
-                const totalRevenue = data.reduce((s: number, r: any) => s + Number(r.expected_revenue || 0), 0);
+                const totalRevenue = data.reduce((s: number, r: any) => s + getNumericValue(r, 'crmLeads', 'expectedRevenue'), 0);
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    firsat: r.name,
-                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : (r.partner_id || '-'),
-                    asama: Array.isArray(r.stage_id) ? r.stage_id[1] : (r.stage_id || '-'),
-                    olasilik: `%${r.probability}`,
-                    beklenen_gelir: Number(r.expected_revenue).toLocaleString('tr-TR', { maximumFractionDigits: 2 })
+                    firsat: getValue(r, 'crmLeads', 'name'),
+                    musteri: getValue(r, 'crmLeads', 'customer'),
+                    asama: getValue(r, 'crmLeads', 'stage'),
+                    olasilik: `%${getNumericValue(r, 'crmLeads', 'probability')}`,
+                    beklenen_gelir: getNumericValue(r, 'crmLeads', 'expectedRevenue').toLocaleString('tr-TR', { maximumFractionDigits: 2 })
                 }));
 
                 return {
@@ -174,20 +176,20 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
             }
 
             case "opportunity_summary": {
-                const totalLeads = await countOdoo("crm.lead", []);
+                const totalLeads = await countData(getTables().crmLeads, []);
 
-                const leads = await searchReadOdoo(
-                    "crm.lead", [], ["probability", "expected_revenue", "stage_id"], 500, ""
+                const leads = await searchData(
+                    getTables().crmLeads, [], [getField('crmLeads', 'probability'), getField('crmLeads', 'expectedRevenue'), getField('crmLeads', 'stage')], 500, ""
                 );
 
-                const open = (leads || []).filter((l: any) => Number(l.probability) > 0 && Number(l.probability) < 100);
-                const won = (leads || []).filter((l: any) => Number(l.probability) >= 100);
-                const lost = (leads || []).filter((l: any) => Number(l.probability) === 0);
+                const open = (leads || []).filter((l: any) => getNumericValue(l, 'crmLeads', 'probability') > 0 && getNumericValue(l, 'crmLeads', 'probability') < 100);
+                const won = (leads || []).filter((l: any) => getNumericValue(l, 'crmLeads', 'probability') >= 100);
+                const lost = (leads || []).filter((l: any) => getNumericValue(l, 'crmLeads', 'probability') === 0);
 
-                const totalExpectedRevenue = open.reduce((s: number, l: any) => s + Number(l.expected_revenue || 0), 0);
-                const wonRevenue = won.reduce((s: number, l: any) => s + Number(l.expected_revenue || 0), 0);
+                const totalExpectedRevenue = open.reduce((s: number, l: any) => s + getNumericValue(l, 'crmLeads', 'expectedRevenue'), 0);
+                const wonRevenue = won.reduce((s: number, l: any) => s + getNumericValue(l, 'crmLeads', 'expectedRevenue'), 0);
                 const avgProbability = open.length
-                    ? (open.reduce((s: number, l: any) => s + Number(l.probability || 0), 0) / open.length)
+                    ? (open.reduce((s: number, l: any) => s + getNumericValue(l, 'crmLeads', 'probability'), 0) / open.length)
                     : 0;
 
                 const winRate = totalLeads ? ((won.length / totalLeads) * 100).toFixed(1) : '0';
@@ -195,7 +197,7 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
                 // Stage distribution
                 const stageCounts: Record<string, number> = {};
                 (leads || []).forEach((l: any) => {
-                    const stage = Array.isArray(l.stage_id) ? l.stage_id[1] : (l.stage_id || 'Belirtilmemiş');
+                    const stage = getValue(l, 'crmLeads', 'stage', 'Belirtilmemiş');
                     stageCounts[stage] = (stageCounts[stage] || 0) + 1;
                 });
 
@@ -224,22 +226,22 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
             }
 
             case "open_opportunities": {
-                const data = await searchReadOdoo(
-                    "crm.lead", [["probability", ">", 0], ["probability", "<", 100]], LEAD_FIELDS, 50, "probability DESC"
+                const data = await searchData(
+                    getTables().crmLeads, [[getField('crmLeads', 'probability'), ">", 0], [getField('crmLeads', 'probability'), "<", 100]], getLeadFields(), 50, `${getField('crmLeads', 'probability')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Açık CRM fırsatı bulunmuyor.", data: null, ui_component: null };
                 }
 
-                const totalRevenue = data.reduce((s: number, r: any) => s + Number(r.expected_revenue || 0), 0);
+                const totalRevenue = data.reduce((s: number, r: any) => s + getNumericValue(r, 'crmLeads', 'expectedRevenue'), 0);
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    firsat: r.name,
-                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : (r.partner_id || '-'),
-                    asama: Array.isArray(r.stage_id) ? r.stage_id[1] : (r.stage_id || '-'),
-                    olasilik: `%${r.probability}`,
-                    beklenen_gelir: Number(r.expected_revenue).toLocaleString('tr-TR', { maximumFractionDigits: 2 })
+                    firsat: getValue(r, 'crmLeads', 'name'),
+                    musteri: getValue(r, 'crmLeads', 'customer'),
+                    asama: getValue(r, 'crmLeads', 'stage'),
+                    olasilik: `%${getNumericValue(r, 'crmLeads', 'probability')}`,
+                    beklenen_gelir: getNumericValue(r, 'crmLeads', 'expectedRevenue').toLocaleString('tr-TR', { maximumFractionDigits: 2 })
                 }));
 
                 return {
@@ -253,20 +255,20 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
             }
 
             case "won_opportunities": {
-                const data = await searchReadOdoo(
-                    "crm.lead", [["probability", ">=", 100]], LEAD_FIELDS, 50, "expected_revenue DESC"
+                const data = await searchData(
+                    getTables().crmLeads, [[getField('crmLeads', 'probability'), ">=", 100]], getLeadFields(), 50, `${getField('crmLeads', 'expectedRevenue')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Henüz kazanılmış fırsat bulunmuyor.", data: null, ui_component: null };
                 }
 
-                const totalRevenue = data.reduce((s: number, r: any) => s + Number(r.expected_revenue || 0), 0);
+                const totalRevenue = data.reduce((s: number, r: any) => s + getNumericValue(r, 'crmLeads', 'expectedRevenue'), 0);
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
-                    firsat: r.name,
-                    musteri: Array.isArray(r.partner_id) ? r.partner_id[1] : (r.partner_id || '-'),
-                    kazanilan_gelir: Number(r.expected_revenue).toLocaleString('tr-TR', { maximumFractionDigits: 2 })
+                    firsat: getValue(r, 'crmLeads', 'name'),
+                    musteri: getValue(r, 'crmLeads', 'customer'),
+                    kazanilan_gelir: getNumericValue(r, 'crmLeads', 'expectedRevenue').toLocaleString('tr-TR', { maximumFractionDigits: 2 })
                 }));
 
                 return {
@@ -281,17 +283,17 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
 
             case "pipeline_chart":
             case "stage_analysis": {
-                const leads = await searchReadOdoo("crm.lead", [], ["stage_id", "expected_revenue"], 500, "");
+                const leads = await searchData(getTables().crmLeads, [], [getField('crmLeads', 'stage'), getField('crmLeads', 'expectedRevenue')], 500, "");
                 if (!leads?.length) {
                     return { content: "Pipeline analizi için yeterli veri yok.", data: null, ui_component: null };
                 }
 
                 const stageData: Record<string, { count: number; revenue: number }> = {};
                 leads.forEach((l: any) => {
-                    const stage = Array.isArray(l.stage_id) ? l.stage_id[1] : (l.stage_id || 'Belirtilmemiş');
+                    const stage = getValue(l, 'crmLeads', 'stage', 'Belirtilmemiş');
                     if (!stageData[stage]) stageData[stage] = { count: 0, revenue: 0 };
                     stageData[stage].count++;
-                    stageData[stage].revenue += Number(l.expected_revenue || 0);
+                    stageData[stage].revenue += getNumericValue(l, 'crmLeads', 'expectedRevenue');
                 });
 
                 const chartData = Object.entries(stageData)
@@ -301,7 +303,7 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
                         beklenen_gelir: Math.round(data.revenue)
                     }));
 
-                const totalPipeline = leads.reduce((s: number, l: any) => s + Number(l.expected_revenue || 0), 0);
+                const totalPipeline = leads.reduce((s: number, l: any) => s + getNumericValue(l, 'crmLeads', 'expectedRevenue'), 0);
 
                 return {
                     content:
@@ -315,8 +317,8 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
             }
 
             case "revenue_forecast": {
-                const leads = await searchReadOdoo(
-                    "crm.lead", [["probability", ">", 0]], ["probability", "expected_revenue"], 500, ""
+                const leads = await searchData(
+                    getTables().crmLeads, [[getField('crmLeads', 'probability'), ">", 0]], [getField('crmLeads', 'probability'), getField('crmLeads', 'expectedRevenue')], 500, ""
                 );
                 if (!leads?.length) {
                     return { content: "Gelir tahmini için yeterli açık fırsat yok.", data: null, ui_component: null };
@@ -324,10 +326,10 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
 
                 // Weighted revenue = expected_revenue * (probability / 100)
                 const weightedTotal = leads.reduce((s: number, l: any) => {
-                    return s + (Number(l.expected_revenue || 0) * Number(l.probability || 0) / 100);
+                    return s + (getNumericValue(l, 'crmLeads', 'expectedRevenue') * getNumericValue(l, 'crmLeads', 'probability') / 100);
                 }, 0);
 
-                const rawTotal = leads.reduce((s: number, l: any) => s + Number(l.expected_revenue || 0), 0);
+                const rawTotal = leads.reduce((s: number, l: any) => s + getNumericValue(l, 'crmLeads', 'expectedRevenue'), 0);
 
                 // Group by probability ranges
                 const ranges = [
@@ -340,13 +342,13 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
 
                 const chartData = ranges.map(range => {
                     const inRange = leads.filter((l: any) => {
-                        const p = Number(l.probability);
+                        const p = getNumericValue(l, 'crmLeads', 'probability');
                         return p >= range.min && p <= range.max;
                     });
                     return {
                         name: range.label,
                         firsat_sayisi: inRange.length,
-                        beklenen_gelir: Math.round(inRange.reduce((s: number, l: any) => s + Number(l.expected_revenue || 0), 0))
+                        beklenen_gelir: Math.round(inRange.reduce((s: number, l: any) => s + getNumericValue(l, 'crmLeads', 'expectedRevenue'), 0))
                     };
                 }).filter(d => d.firsat_sayisi > 0);
 
@@ -423,7 +425,7 @@ Eğer fırsat adı bulunamadıysa {"lead_name": null} döndür.`);
     } catch (error: any) {
         console.error("CRM Action Error:", error);
         if (error.message?.includes("ECONNREFUSED")) {
-            return { content: "⚠️ Odoo ERP sistemine bağlanılamıyor. Lütfen Odoo servisinin (localhost:8069) çalıştığından emin olun.", data: null, ui_component: null };
+            return { content: getConnectionErrorMessage(), data: null, ui_component: null };
         }
         return { content: "CRM verisi işlenirken hata oluştu: " + error.message, data: null, ui_component: null };
     }
