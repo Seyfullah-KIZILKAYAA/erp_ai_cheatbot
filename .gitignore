@@ -35,6 +35,7 @@ yarn-error.log*
 
 # connection data (encrypted credentials)
 /data/connections.json
+/data/schema-mappings.json
 
 # vercel
 .vercel

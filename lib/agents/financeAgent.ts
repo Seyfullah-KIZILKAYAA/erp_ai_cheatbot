@@ -15,7 +15,7 @@
  * - revenue_breakdown: Gelir kırılımı grafiği
  */
 
-import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
+import { searchData, searchDataWithRelations, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -28,6 +28,7 @@ type FinanceIntent =
     | "invoice_summary"
     | "payment_list"
     | "payment_summary"
+    | "payment_by_customer"
     | "unpaid_invoices"
     | "overdue_analysis"
     | "payment_status"
@@ -69,6 +70,9 @@ export async function processFinanceQuery(userQuery: string, history: any[], wri
     if (lower.includes("ödeme listesi") || lower.includes("ödemeleri listele")) {
         return executeFinanceAction("payment_list", userQuery);
     }
+    if (lower.includes("havale") || (lower.includes("ödeme") && lower.includes("müşteri")) || (lower.includes("ödeme") && lower.includes("kim"))) {
+        return executeFinanceAction("payment_by_customer", userQuery);
+    }
     if (lower.includes("finans özet") || lower.includes("mali özet") || lower.includes("finans rapor") || lower.includes("fatura özet")) {
         return executeFinanceAction("invoice_summary", userQuery);
     }
@@ -95,12 +99,13 @@ export async function processFinanceQuery(userQuery: string, history: any[], wri
     2. "invoice_summary" → Fatura özeti ve istatistikleri
     3. "payment_list" → Ödemeleri listele
     4. "payment_summary" → Ödeme özeti ve nakit akışı
-    5. "unpaid_invoices" → Ödenmemiş faturaları göster
-    6. "overdue_analysis" → Vadesi geçmiş fatura analizi
-    7. "payment_status" → Ödeme durumu dağılımı (grafik)
-    8. "revenue_breakdown" → Gelir kırılımı grafiği
-    9. "create_invoice" → Yeni fatura oluşturma
-    10. "update_invoice" → Fatura bilgilerini güncelleme
+    5. "payment_by_customer" → Müşteri bazlı ödeme/havale analizi (kim ne kadar ödedi, havale yapan müşteriler)
+    6. "unpaid_invoices" → Ödenmemiş faturaları göster
+    7. "overdue_analysis" → Vadesi geçmiş fatura analizi
+    8. "payment_status" → Ödeme durumu dağılımı (grafik)
+    9. "revenue_breakdown" → Gelir kırılımı grafiği
+    10. "create_invoice" → Yeni fatura oluşturma
+    11. "update_invoice" → Fatura bilgilerini güncelleme
 
     ÇIKTI FORMATI:
     { "intent": "invoice_list", "reasoning": "Açıklama" }
@@ -164,7 +169,7 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
     try {
         switch (intent) {
             case "invoice_list": {
-                const data = await searchData(
+                const data = await searchDataWithRelations(
                     getTables().invoices, [[getField('invoices', 'status'), "=", "posted"]], getInvoiceFields(), 50, `${getField('invoices', 'date')} DESC`
                 );
                 if (!data?.length) {
@@ -172,11 +177,12 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
                 }
 
                 const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'invoices', 'totalAmount'), 0);
+                const customerField = getField('invoices', 'customer');
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
                     fatura: r.name,
-                    musteri: getValue(r, 'invoices', 'customer'),
+                    musteri: r[`${customerField}_display`] || getValue(r, 'invoices', 'customer'),
                     tutar: getNumericValue(r, 'invoices', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
                     odeme_durumu: PAYMENT_STATE_LABELS[getRawValue(r, 'invoices', 'paymentStatus')] || getValue(r, 'invoices', 'paymentStatus'),
                     tarih: r[getField('invoices', 'date')]
@@ -213,31 +219,26 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
                 return {
                     content:
                         `## 💰 Finans Departmanı Özeti\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Fatura | **${totalInvoices}** |\n` +
-                        `| Onaylı Fatura | **${postedInvoices}** |\n` +
-                        `| Taslak Fatura | **${draftInvoices}** |\n` +
-                        `| Ödenen | **${paidCount}** |\n` +
-                        `| Ödenmemiş | **${unpaidCount}** |\n` +
-                        `| Toplam Tutar | **${totalAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Ort. Fatura | **${avgAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| En Yüksek Fatura | **${maxAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Tahsilat Oranı | **%${collectionRate}** |\n`,
+                        `Toplam **${totalInvoices}** fatura: **${postedInvoices}** onaylı, **${draftInvoices}** taslak.\n` +
+                        `Ödeme durumu: **${paidCount}** ödendi, **${unpaidCount}** ödenmemiş.\n` +
+                        `Toplam tutar **${totalAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**, ortalama **${avgAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**, en yüksek **${maxAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**.\n` +
+                        `Tahsilat oranı: **%${collectionRate}**`,
                     data: { totalInvoices, postedInvoices, paidCount, unpaidCount, totalAmount },
                     ui_component: null
                 };
             }
 
             case "payment_list": {
-                const data = await searchData(getTables().payments, [], getPaymentFields(), 50, `${getField('payments', 'date')} DESC`);
+                const data = await searchDataWithRelations(getTables().payments, [], getPaymentFields(), 50, `${getField('payments', 'date')} DESC`);
                 if (!data?.length) {
                     return { content: "Sistemde ödeme kaydı bulunamadı.", data: null, ui_component: null };
                 }
                 const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'payments', 'amount'), 0);
+                const paymentCustomerField = getField('payments', 'customer');
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
                     odeme: r.name,
-                    musteri: getValue(r, 'payments', 'customer'),
+                    musteri: r[`${paymentCustomerField}_display`] || getValue(r, 'payments', 'customer'),
                     tutar: getNumericValue(r, 'payments', 'amount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
                     tip: getRawValue(r, 'payments', 'type') === 'inbound' ? 'Tahsilat' : 'Ödeme',
                     durum: getRawValue(r, 'payments', 'status'),
@@ -261,27 +262,125 @@ async function executeFinanceAction(intent: FinanceIntent, userQuery: string, wr
                 return {
                     content:
                         `## 💳 Ödeme Özeti\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Tahsilat | **${inboundTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** (${inbound.length} adet) |\n` +
-                        `| Toplam Ödeme | **${outboundTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** (${outbound.length} adet) |\n` +
-                        `| Net Nakit Akışı | **${netFlow.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n\n` +
+                        `Toplam tahsilat **${inboundTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** (${inbound.length} adet), toplam ödeme **${outboundTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** (${outbound.length} adet).\n` +
+                        `Net nakit akışı: **${netFlow.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**\n\n` +
                         `${netFlow >= 0 ? 'Nakit akışı **pozitif** seyrediyor.' : '⚠️ Nakit akışı **negatif** — çıkışlar girişleri aşıyor.'}`,
                     data: { inboundTotal, outboundTotal, netFlow },
                     ui_component: null
                 };
             }
 
+            case "payment_by_customer": {
+                // Fetch all payments
+                const payments = await searchData(getTables().payments, [], [], 500, '');
+                if (!payments?.length) {
+                    return { content: "Sistemde ödeme kaydı bulunamadı.", data: null, ui_component: null };
+                }
+
+                // Resolve customer names through FK chain:
+                // Odemeler → FaturaID → Faturalar → SiparisID → Siparisler → MusteriID → Musteriler.MusteriAdi
+                const customerNames: Map<number, string> = new Map();
+                try {
+                    // Step 1: Get all invoices linked from payments (FaturaID → Faturalar)
+                    const invoiceTable = getTables().invoices;
+                    const orderTable = getTables().salesOrders;
+                    const customerTable = getTables().customers;
+
+                    if (invoiceTable && orderTable && customerTable) {
+                        const faturaIds = [...new Set(payments.map((p: any) => p.FaturaID).filter(Boolean))];
+                        if (faturaIds.length > 0) {
+                            const faturalar = await searchData(invoiceTable, [['FaturaID', 'in', faturaIds]], [], faturaIds.length, '');
+
+                            // Step 2: Get all orders linked from invoices (SiparisID → Siparisler)
+                            const siparisIds = [...new Set(faturalar.map((f: any) => f.SiparisID).filter(Boolean))];
+                            if (siparisIds.length > 0) {
+                                const siparisler = await searchData(orderTable, [[getField('salesOrders', 'id'), 'in', siparisIds]], [getField('salesOrders', 'id'), getField('salesOrders', 'customer')], siparisIds.length, '');
+
+                                // Step 3: Get all customers (MusteriID → Musteriler)
+                                const customerIdField = getField('salesOrders', 'customer');
+                                const musteriIds = [...new Set(siparisler.map((s: any) => s[customerIdField]).filter(Boolean))];
+                                if (musteriIds.length > 0) {
+                                    const musteriler = await searchData(customerTable, [[getField('customers', 'id'), 'in', musteriIds]], [getField('customers', 'id'), getField('customers', 'name')], musteriIds.length, '');
+
+                                    // Build lookup: MusteriID → MusteriAdi
+                                    const musteriLookup = new Map<number, string>();
+                                    for (const m of musteriler) {
+                                        musteriLookup.set(m[getField('customers', 'id')], getValue(m, 'customers', 'name'));
+                                    }
+
+                                    // Build lookup: SiparisID → MusteriID
+                                    const siparisLookup = new Map<number, number>();
+                                    for (const s of siparisler) {
+                                        siparisLookup.set(s[getField('salesOrders', 'id')], s[customerIdField]);
+                                    }
+
+                                    // Build lookup: FaturaID → SiparisID
+                                    const faturaLookup = new Map<number, number>();
+                                    for (const f of faturalar) {
+                                        faturaLookup.set(f.FaturaID, f.SiparisID);
+                                    }
+
+                                    // Chain: Payment.FaturaID → Fatura.SiparisID → Siparis.MusteriID → Musteri.MusteriAdi
+                                    for (const p of payments) {
+                                        const faturaId = p.FaturaID;
+                                        const siparisId = faturaLookup.get(faturaId);
+                                        const musteriId = siparisId ? siparisLookup.get(siparisId) : undefined;
+                                        const musteriAdi = musteriId ? musteriLookup.get(musteriId) : undefined;
+                                        if (musteriAdi) customerNames.set(p.OdemeID, musteriAdi);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.warn('[FINANCE] FK chain resolution failed:', err);
+                }
+
+                // Group by customer
+                const customerTotals: Record<string, { name: string; total: number; count: number }> = {};
+                for (const p of payments) {
+                    const amountField = getField('payments', 'amount');
+                    const amount = Number(p[amountField] || p.OdemeTutari || 0);
+                    const customerName = customerNames.get(p.OdemeID) || 'Bilinmeyen';
+
+                    if (!customerTotals[customerName]) {
+                        customerTotals[customerName] = { name: customerName, total: 0, count: 0 };
+                    }
+                    customerTotals[customerName].total += amount;
+                    customerTotals[customerName].count++;
+                }
+
+                const sorted = Object.values(customerTotals).sort((a, b) => b.total - a.total);
+                const grandTotal = sorted.reduce((s, c) => s + c.total, 0);
+
+                const tableData = sorted.map((c, i) => ({
+                    sira: i + 1,
+                    musteri: c.name,
+                    odeme_sayisi: c.count,
+                    toplam_tutar: c.total.toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ₺'
+                }));
+
+                return {
+                    content:
+                        `## 💳 Müşteri Bazlı Ödeme Analizi\n\n` +
+                        `**${sorted.length}** müşteriden toplam **${payments.length}** ödeme, **${grandTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**.`,
+                    data: tableData,
+                    ui_component: 'table'
+                };
+            }
+
             case "unpaid_invoices": {
-                const data = await searchData(
+                const data = await searchDataWithRelations(
                     getTables().invoices, [[getField('invoices', 'status'), "=", "posted"], [getField('invoices', 'paymentStatus'), "=", "not_paid"]], getInvoiceFields(), 50, `${getField('invoices', 'totalAmount')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Tüm faturalar ödenmiş durumda.", data: null, ui_component: null };
                 }
                 const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'invoices', 'totalAmount'), 0);
+                const unpaidCustomerField = getField('invoices', 'customer');
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1, fatura: r.name,
-                    musteri: getValue(r, 'invoices', 'customer'),
+                    musteri: r[`${unpaidCustomerField}_display`] || getValue(r, 'invoices', 'customer'),
                     tutar: getNumericValue(r, 'invoices', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
                     tarih: r[getField('invoices', 'date')]
                 }));

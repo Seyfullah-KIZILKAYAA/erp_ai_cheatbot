@@ -172,12 +172,8 @@ async function executeAnalyticsAction(intent: AnalyticsIntent, userQuery: string
                 return {
                     content:
                         `## 📊 ERPO KPI Özeti\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Gelir | **${Number(kpi.total_revenue).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Toplam Sipariş | **${kpi.total_orders.toLocaleString('tr-TR')}** |\n` +
-                        `| Aktif Müşteri | **${kpi.active_customers.toLocaleString('tr-TR')}** |\n` +
-                        `| Ort. Sipariş Tutarı | **${Number(kpi.avg_order_value).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Tespit Edilen Anomali | **${kpi.anomaly_count}** |\n\n` +
+                        `Toplam gelir **${Number(kpi.total_revenue).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**, toplam **${kpi.total_orders.toLocaleString('tr-TR')}** sipariş, **${kpi.active_customers.toLocaleString('tr-TR')}** aktif müşteri.\n` +
+                        `Ortalama sipariş tutarı **${Number(kpi.avg_order_value).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**, tespit edilen anomali: **${kpi.anomaly_count}**.\n` +
                         growthText,
                     data: kpi,
                     ui_component: null

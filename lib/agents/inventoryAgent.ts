@@ -15,7 +15,7 @@
  * - stock_chart: Stok durumu bar chart
  */
 
-import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
+import { searchData, searchDataWithRelations, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -234,18 +234,11 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                 return {
                     content:
                         `## 📊 Stok & Envanter Özeti\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Ürün | **${totalProducts}** |\n` +
-                        `| Toplam Stok Miktarı | **${totalQty.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet |\n` +
-                        `| Ortalama Stok / Ürün | **${avgQty.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet |\n` +
-                        `| En Yüksek Stok | **${maxQty.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet |\n` +
-                        `| En Düşük Stok | **${minQty.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet |\n` +
-                        `| Kritik Stok (< ${CRITICAL_THRESHOLD}) | **${criticalCount}** ürün |\n` +
-                        `| Stokta Olmayan (≤ 0) | **${zeroStockCount}** ürün |\n` +
-                        `| Tahmini Stok Değeri | **${totalValue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Toplam Stok Hareketi | **${totalMoves}** |\n` +
-                        `| Tamamlanan Hareket | **${doneMoves}** |\n\n` +
-                        `Sağlık oranı: **%${totalProducts ? (((totalProducts - criticalCount) / totalProducts) * 100).toFixed(1) : 0}** ürün yeterli stokta`,
+                        `Toplam **${totalProducts}** ürün, toplam stok **${totalQty.toLocaleString('tr-TR', { maximumFractionDigits: 2 })}** adet.\n` +
+                        `Tahmini stok değeri: **${totalValue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**\n` +
+                        `Kritik stok (< ${CRITICAL_THRESHOLD}): **${criticalCount}** ürün, stokta olmayan: **${zeroStockCount}** ürün.\n` +
+                        `Stok hareketleri: **${totalMoves}** toplam, **${doneMoves}** tamamlandı.\n` +
+                        `Sağlık oranı: **%${totalProducts ? (((totalProducts - criticalCount) / totalProducts) * 100).toFixed(1) : 0}** ürün yeterli stokta.`,
                     data: { totalProducts, totalQty, avgQty, criticalCount, zeroStockCount, totalValue, totalMoves, doneMoves },
                     ui_component: 'stat'
                 };
@@ -286,10 +279,8 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                 return {
                     content:
                         `## ⚠️ Kritik Stok Uyarısı\n\n` +
-                        `Stok seviyesi **${CRITICAL_THRESHOLD}** adetten düşük **${data.length}** ürün tespit edildi.\n\n` +
-                        `| Durum | Adet |\n|-------|------|\n` +
-                        `| 🔴 Stokta Yok (≤ 0) | **${zeroStock.length}** |\n` +
-                        `| 🟡 Düşük Stok (1-${CRITICAL_THRESHOLD - 1}) | **${lowStock.length}** |\n\n` +
+                        `Stok seviyesi **${CRITICAL_THRESHOLD}** adetten düşük **${data.length}** ürün tespit edildi.\n` +
+                        `🔴 Stokta yok: **${zeroStock.length}** ürün, 🟡 Düşük stok: **${lowStock.length}** ürün.\n` +
                         `Bu ürünler için acil tedarik planlaması önerilir.`,
                     data: tableData,
                     ui_component: 'table'
@@ -424,10 +415,7 @@ async function executeInventoryAction(intent: InventoryIntent, userQuery: string
                 return {
                     content:
                         `## 💰 Stok Değeri Analizi\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Değeri > 0 Olan Ürün | **${enriched.length}** |\n` +
-                        `| Toplam Stok Değeri | **${totalValue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Ort. Ürün Değeri | **${(totalValue / enriched.length).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n\n` +
+                        `**${enriched.length}** üründe toplam stok değeri **${totalValue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**, ortalama **${(totalValue / enriched.length).toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**.\n\n` +
                         `**En Değerli 3 Ürün:**\n${top3Lines}`,
                     data: tableData,
                     ui_component: 'table'

@@ -4,7 +4,7 @@
 
 ## 🚀 Overview
 
-**ERP AI Chatbot** is a state-of-the-art, multi-agent artificial intelligence ecosystem designed to bridge the gap between complex ERP data and natural language interaction. Built primarily for **Odoo ERP**, it transforms your business management experience by providing a conversational interface that doesn't just answer questions—it analyzes, reasons, writes records, and reports like a professional management team.
+**ERP AI Chatbot** is a state-of-the-art, multi-agent artificial intelligence ecosystem designed to bridge the gap between complex ERP/database data and natural language interaction. Built with a **universal data source architecture**, it connects to **any database** — Odoo, PostgreSQL, MySQL, MSSQL, or SQLite — and automatically understands the schema regardless of naming conventions (Turkish, English, abbreviated, or custom).
 
 By leveraging the **Llama 3.3 70B** model via high-speed **Groq** inference, the system achieves near-instant response times with deep domain expertise across various business functions.
 
@@ -23,7 +23,7 @@ The core of the system is the **Orchestrator Agent**. Unlike traditional chatbot
 
 ## 🛡️ Meet the Specialized Agents
 
-The system features **7 autonomous agents**, each specialized in a specific business vertical with tailored system prompts and Odoo table access:
+The system features **7 autonomous agents**, each specialized in a specific business vertical with tailored system prompts and schema-aware data access:
 
 ### 📈 CRM Agent (Customer Relations)
 *   **Focus**: Leads, Opportunities, Pipelines, and Conversion Rates.
@@ -80,13 +80,57 @@ User Request → Agent extracts data → Missing field check
 
 ---
 
+## 🗄️ Universal Database Support & LLM-First Schema Mapping
+
+The system supports **any database** through a universal adapter architecture. When connecting to a new database, an intelligent **Schema Mapper Agent** automatically maps tables and columns to ERP concepts using LLM reasoning.
+
+### Supported Data Sources
+| Type | Protocol | Status |
+| :--- | :--- | :--- |
+| **Odoo** | XML-RPC | Fully supported (pattern matching) |
+| **PostgreSQL** | pg | Fully supported |
+| **MySQL** | mysql2 | Fully supported |
+| **Microsoft SQL Server** | tedious/mssql | Fully supported |
+| **SQLite** | better-sqlite3 | Fully supported |
+
+### How Schema Mapping Works
+
+```
+New Connection → Discover Tables & Fields → Check Persisted Mappings
+  → [Cached?] Load from disk → Done
+  → [Fresh?] Pattern matching (hints) → LLM-FIRST mapping → Field supplement → Persist to disk
+```
+
+**Key features:**
+- **LLM-First**: For non-Odoo databases, the LLM is the PRIMARY mapper — pattern matching only provides hints
+- **FK-Aware**: Foreign key relationships are sent to the LLM for better understanding of table roles
+- **Fuzzy Validation**: Handles casing differences and minor LLM output variations (Levenshtein distance)
+- **Batch Processing**: Maps all entity fields in a single LLM call (2 API calls total, not N+1)
+- **Persistent Mappings**: Saved to `data/schema-mappings.json` so they survive server restarts
+- **Multi-Hop FK Resolution**: Resolves cross-table chains (e.g., Payments → Invoices → Orders → Customers) via BFS
+
+### Connection Wizard
+
+The built-in Connection Wizard UI allows you to:
+1. Select database type
+2. Enter connection details
+3. Test connection
+4. Automatically discover and map schema
+5. Start querying immediately
+
+---
+
 ## ✨ Key Technical Features
 
+- **🗄️ Universal Database Support**: Connect to Odoo, PostgreSQL, MySQL, MSSQL, or SQLite through a unified adapter interface.
+- **🧠 LLM-First Schema Mapping**: AI-powered table/column mapping that works with any naming convention (Turkish, English, abbreviated).
+- **🔗 Multi-Hop FK Resolution**: Automatically resolves foreign key chains across multiple tables using BFS pathfinding.
+- **💾 Persistent Schema Mappings**: Mappings saved to disk — no re-mapping needed on server restart.
 - **🔍 Chain of Thought (CoT) UI**: Witness the AI's internal reasoning process step-by-step.
 - **📊 Interactive Dashboards**: Real-time data visualization using Recharts.
 - **⚡ Ultra-Low Latency**: Powered by Groq's LPU (Language Processing Unit) for sub-second analysis.
 - **📥 Enterprise Export**: One-click professional report generation in **PDF** or **Excel (XLSX)**.
-- **🔒 Enterprise Security**: Secure XML-RPC protocol for direct Odoo integration without middleware data storage.
+- **🔒 Enterprise Security**: Secure protocols for direct database integration without middleware data storage.
 - **✍️ Two-Step Write Confirmation**: Safe create & update operations with preview and approval flow.
 - **🧠 Session Memory**: Entity-aware context that remembers previously mentioned records.
 - **⚙️ Settings Panel**: Dark mode, write toggle, and user preferences.
@@ -101,9 +145,10 @@ User Request → Agent extracts data → Missing field check
 | :--- | :--- |
 | **Frontend** | Next.js 16 (App Router), React 19, TypeScript |
 | **Styling** | CSS Modules, Twilight Royal Blue theme |
-| **AI Models** | Llama 3.3 70B (Orchestration & Specialized Analysis) |
+| **AI Models** | Llama 3.3 70B (Orchestration, Schema Mapping & Specialized Analysis) |
 | **Inference** | Groq API |
-| **CRM/ERP** | Odoo XML-RPC API |
+| **Data Sources** | Odoo (XML-RPC), PostgreSQL, MySQL, MSSQL, SQLite |
+| **Schema Mapping** | LLM-First with pattern hints, FK-aware, persistent |
 | **Reports** | jsPDF, Recharts, XLSX |
 | **Analytics** | Prophet (Forecasting), Isolation Forest (Anomaly), K-Means (Segmentation) |
 
@@ -113,8 +158,8 @@ User Request → Agent extracts data → Missing field check
 
 ### 1. Prerequisites
 - Node.js 18+ and npm
-- A running Odoo Instance (or Odoo SH/Online)
 - Groq API Key
+- A database to connect to (Odoo, PostgreSQL, MySQL, MSSQL, or SQLite)
 
 ### 2. Clone the Repository
 ```bash
@@ -130,15 +175,17 @@ npm install
 ### 4. Configure Environment
 Create a `.env.local` file in the root directory:
 ```env
-# Groq API Configuration
+# Groq API Configuration (required)
 GROQ_API_KEY=gsk_your_key_here
 
-# Odoo Connection Details
+# Optional: Odoo Connection via env vars (alternative to Connection Wizard)
 ODOO_URL=https://your-company.odoo.com
 ODOO_DB=database_name
 ODOO_USERNAME=user_email
 ODOO_PASSWORD=api_key_or_password
 ```
+
+> **Note:** For non-Odoo databases, use the built-in **Connection Wizard** in the UI to configure your database connection. The wizard supports PostgreSQL, MySQL, MSSQL, and SQLite.
 
 ### 5. Start Development Server
 ```bash
@@ -153,8 +200,12 @@ Open `http://localhost:3000` in your browser.
 - [x] **Multi-Agent Collaboration**: Agents work in parallel for cross-departmental queries.
 - [x] **Write Operations with Confirmation**: Create & update records across all modules with two-step approval.
 - [x] **ERPO Analytics Platform**: Advanced forecasting, anomaly detection, and customer segmentation.
+- [x] **Universal Database Support**: Connect to any database (Odoo, PostgreSQL, MySQL, MSSQL, SQLite).
+- [x] **LLM-First Schema Mapping**: AI-powered automatic table/column mapping for any naming convention.
+- [x] **Multi-Hop FK Resolution**: Cross-table foreign key chain resolution via BFS pathfinding.
+- [x] **Persistent Schema Mappings**: Mappings survive server restarts via disk persistence.
 - [ ] **Voice Interaction**: Integration with Whisper for voice-to-command functionality.
-- [ ] **Custom Agent Creation Tool**: A UI to build your own specialized agents for custom Odoo modules.
+- [ ] **Custom Agent Creation Tool**: A UI to build your own specialized agents for custom modules.
 - [ ] **Webhook & Notification System**: Real-time alerts for critical ERP events.
 
 ---

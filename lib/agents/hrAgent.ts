@@ -167,10 +167,7 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
                 return {
                     content:
                         `## 👥 Çalışan Listesi\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Çalışan | **${data.length}** |\n` +
-                        `| En Kalabalık Departman | **${topDept ? `${topDept[0]} (${topDept[1]} kişi)` : '-'}** |\n` +
-                        `| Farklı Departman | **${Object.keys(deptCounts).length}** |\n`,
+                        `Toplam **${data.length}** çalışan listelendi.`,
                     data: tableData,
                     ui_component: 'table'
                 };
@@ -208,12 +205,9 @@ async function executeHrAction(intent: HrIntent, userQuery: string, searchTerm?:
                 return {
                     content:
                         `## 👥 İnsan Kaynakları Özeti\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Çalışan | **${totalEmployees}** |\n` +
-                        `| Farklı Departman | **${deptCount}** |\n` +
-                        `| Farklı Pozisyon | **${positionCount}** |\n` +
-                        `| En Kalabalık Departman | **${topDept ? `${topDept[0]} (${topDept[1]})` : '-'}** |\n` +
-                        `| En Yaygın Pozisyon | **${topPosition ? `${topPosition[0]} (${topPosition[1]})` : '-'}** |\n\n` +
+                        `Toplam **${totalEmployees}** çalışan, **${deptCount}** farklı departman, **${positionCount}** farklı pozisyon.\n` +
+                        `En kalabalık departman: **${topDept ? `${topDept[0]} (${topDept[1]} kişi)` : '-'}**\n` +
+                        `En yaygın pozisyon: **${topPosition ? `${topPosition[0]} (${topPosition[1]} kişi)` : '-'}**\n\n` +
                         `**Departman Dağılımı (Top 5):**\n${deptLines}`,
                     data: { totalEmployees, deptCount, positionCount },
                     ui_component: null

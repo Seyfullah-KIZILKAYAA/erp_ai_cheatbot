@@ -12,7 +12,7 @@
  */
 
 import { getConnectionType, getSchemaCache, hasActiveConnection } from './ConnectionManager';
-import { getTableMapping } from '@/lib/config/tableMapping';
+import { getTableMapping, isEntityMapped, getUnmappedEntities } from '@/lib/config/tableMapping';
 import { resolveField, resolveFields, getFieldMapping, autoDetectAllFieldMappings, AllFieldMappings } from '@/lib/config/fieldMapping';
 import type { FieldInfo } from './IDataSourceAdapter';
 
@@ -158,9 +158,12 @@ export async function getSchemaContextForLLM(): Promise<string> {
   try {
     const cache = await getSchemaCache();
     const mappedTables = Object.entries(tables);
-    context += `TABLO YAPISI:\n`;
+    const unmapped = getUnmappedEntities();
+
+    context += `TABLO YAPISI (Eşlenmiş):\n`;
 
     for (const [semantic, tableName] of mappedTables) {
+      if (!tableName) continue; // Skip unmapped entities
       const fields = cache.fields[tableName];
       if (fields && fields.length > 0) {
         const fieldList = fields.slice(0, 15).map((f: FieldInfo) => `${f.name} (${f.type})`).join(', ');
@@ -168,6 +171,12 @@ export async function getSchemaContextForLLM(): Promise<string> {
       } else {
         context += `- ${semantic} → "${tableName}"\n`;
       }
+    }
+
+    if (unmapped.length > 0) {
+      context += `\nEŞLENMEMİŞ KAVRAMLAR (bu veritabanında karşılığı bulunamadı):\n`;
+      context += unmapped.map(e => `- ${e}`).join('\n') + '\n';
+      context += `NOT: Eşlenmemiş kavramlarla ilgili sorulara "Bu veritabanında bu bilgi mevcut değil" şeklinde yanıt ver.\n`;
     }
 
     context += `\nToplam keşfedilen tablo: ${cache.tables.length}\n`;
@@ -183,6 +192,10 @@ export async function getSchemaContextForLLM(): Promise<string> {
  * Only returns fields relevant to a specific entity.
  */
 export async function getEntitySchemaContext(entity: keyof AllFieldMappings): Promise<string> {
+  if (!isEntityMapped(entity as any)) {
+    return `"${entity}" kavramı bu veritabanında eşlenmemiş. Bu veri kaynağında bu bilgi mevcut değil.`;
+  }
+
   const mapping = getFieldMapping(entity);
   const tables = getTableMapping();
   const tableName = (tables as any)[entity] || entity;
@@ -206,9 +219,11 @@ export async function discoverAndMapFields(): Promise<void> {
   try {
     const cache = await getSchemaCache();
     const tables = getTableMapping();
+    const connType = getConnectionType() || undefined;
     const entityFields: Record<string, string[]> = {};
 
     for (const [entity, tableName] of Object.entries(tables)) {
+      if (!tableName) continue;
       const fields = cache.fields[tableName];
       if (fields && fields.length > 0) {
         entityFields[entity] = fields.map((f: FieldInfo) => f.name);
@@ -216,7 +231,7 @@ export async function discoverAndMapFields(): Promise<void> {
     }
 
     if (Object.keys(entityFields).length > 0) {
-      autoDetectAllFieldMappings(entityFields);
+      autoDetectAllFieldMappings(entityFields, connType);
     }
   } catch (error) {
     console.warn('Field mapping auto-detection failed:', error);

@@ -15,7 +15,7 @@
  * - top_purchases: En yüksek tutarlı satın almalar
  */
 
-import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
+import { searchData, searchDataWithRelations, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -162,16 +162,17 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
     try {
         switch (intent) {
             case "po_list": {
-                const data = await searchData(getTables().purchaseOrders, [], getPOFields(), 50, `${getField('purchaseOrders', 'date')} DESC`);
+                const data = await searchDataWithRelations(getTables().purchaseOrders, [], getPOFields(), 50, `${getField('purchaseOrders', 'date')} DESC`);
                 if (!data?.length) {
                     return { content: "Sistemde satın alma siparişi bulunamadı.", data: null, ui_component: null };
                 }
 
                 const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'purchaseOrders', 'totalAmount'), 0);
+                const vendorField = getField('purchaseOrders', 'vendor');
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
                     siparis: getValue(r, 'purchaseOrders', 'name'),
-                    tedarikci: getValue(r, 'purchaseOrders', 'vendor'),
+                    tedarikci: r[`${vendorField}_display`] || getValue(r, 'purchaseOrders', 'vendor'),
                     tutar: getNumericValue(r, 'purchaseOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
                     durum: PO_STATE_LABELS[getRawValue(r, 'purchaseOrders', 'status')] || getValue(r, 'purchaseOrders', 'status'),
                     tarih: getValue(r, 'purchaseOrders', 'date')
@@ -209,23 +210,17 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
                 return {
                     content:
                         `## 🧾 Satın Alma Departmanı Özeti\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Sipariş | **${totalPO}** |\n` +
-                        `| Onaylı Sipariş | **${confirmedPO}** |\n` +
-                        `| Taslak (RFQ) | **${draftPO}** |\n` +
-                        `| İptal Edilen | **${cancelledPO}** |\n` +
-                        `| Toplam Harcama | **${totalAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Ort. Sipariş Tutarı | **${avgAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| En Yüksek Sipariş | **${maxAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| En Düşük Sipariş | **${minAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Kayıtlı Tedarikçi | **${vendorCount}** |\n`,
+                        `Toplam **${totalPO}** sipariş: **${confirmedPO}** onaylı, **${draftPO}** taslak, **${cancelledPO}** iptal.\n` +
+                        `Toplam harcama **${totalAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**, ortalama **${avgAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**.\n` +
+                        `En yüksek sipariş **${maxAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**, en düşük **${minAmount.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**.\n` +
+                        `Kayıtlı tedarikçi: **${vendorCount}**`,
                     data: { totalPO, confirmedPO, draftPO, totalAmount, vendorCount },
                     ui_component: null
                 };
             }
 
             case "pending_orders": {
-                const data = await searchData(
+                const data = await searchDataWithRelations(
                     getTables().purchaseOrders,
                     [[getField('purchaseOrders', 'status'), "in", ["draft", "sent", "to approve"]]],
                     getPOFields(), 50, `${getField('purchaseOrders', 'date')} DESC`
@@ -235,10 +230,11 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
                 }
 
                 const total = data.reduce((s: number, r: any) => s + getNumericValue(r, 'purchaseOrders', 'totalAmount'), 0);
+                const pendingVendorField = getField('purchaseOrders', 'vendor');
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
                     siparis: getValue(r, 'purchaseOrders', 'name'),
-                    tedarikci: getValue(r, 'purchaseOrders', 'vendor'),
+                    tedarikci: r[`${pendingVendorField}_display`] || getValue(r, 'purchaseOrders', 'vendor'),
                     tutar: getNumericValue(r, 'purchaseOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
                     durum: PO_STATE_LABELS[getRawValue(r, 'purchaseOrders', 'status')] || getValue(r, 'purchaseOrders', 'status'),
                     tarih: getValue(r, 'purchaseOrders', 'date')
@@ -280,9 +276,7 @@ async function executePurchasingAction(intent: PurchasingIntent, userQuery: stri
                 return {
                     content:
                         `## 🏢 Tedarikçi Listesi\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Tedarikçi | **${data.length}** |\n` +
-                        `| En Yoğun Şehir | **${topCity ? `${topCity[0]} (${topCity[1]})` : '-'}** |\n`,
+                        `Toplam **${data.length}** tedarikçi listelendi.`,
                     data: tableData,
                     ui_component: 'table'
                 };

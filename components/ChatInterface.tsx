@@ -66,28 +66,28 @@ export default function ChatInterface() {
     const [isConnectionWizardOpen, setIsConnectionWizardOpen] = useState(false)
 
     // Settings state with localStorage persistence
-    const [appSettings, setAppSettings] = useState<AppSettings>(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem(SETTINGS_KEY);
-            if (saved) {
-                try { return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) }; } catch { /* ignore */ }
-            }
+    const [appSettings, setAppSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
+    const [settingsLoaded, setSettingsLoaded] = useState(false)
+
+    useEffect(() => {
+        const saved = localStorage.getItem(SETTINGS_KEY);
+        if (saved) {
+            try { setAppSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(saved) }); } catch { /* ignore */ }
         }
-        return DEFAULT_SETTINGS;
-    })
+        setSettingsLoaded(true);
+    }, [])
 
     // Memory session ID for entity tracking
-    const [memorySessionId] = useState(() => {
-        if (typeof window !== 'undefined') {
-            let sid = localStorage.getItem(MEMORY_SESSION_KEY);
-            if (!sid) {
-                sid = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                localStorage.setItem(MEMORY_SESSION_KEY, sid);
-            }
-            return sid;
+    const [memorySessionId, setMemorySessionId] = useState('')
+
+    useEffect(() => {
+        let sid = localStorage.getItem(MEMORY_SESSION_KEY);
+        if (!sid) {
+            sid = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            localStorage.setItem(MEMORY_SESSION_KEY, sid);
         }
-        return `session-${Date.now()}`;
-    })
+        setMemorySessionId(sid);
+    }, [])
 
     const messagesEndRef = useRef<HTMLDivElement>(null)
     const recognitionRef = useRef<any>(null)

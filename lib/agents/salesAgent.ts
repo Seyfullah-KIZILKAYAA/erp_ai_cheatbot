@@ -16,7 +16,7 @@
  * - revenue_chart: Gelir dağılımı grafiği
  */
 
-import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getEntitySchemaContext, getRawValue } from "@/lib/dataAccess";
+import { searchData, searchDataWithRelations, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getEntitySchemaContext, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -240,17 +240,18 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
     try {
         switch (intent) {
             case "order_list": {
-                const data = await searchData(
+                const data = await searchDataWithRelations(
                     getTables().salesOrders, [], getSaleOrderFields(), 50, `${getField('salesOrders', 'date')} DESC`
                 );
                 if (!data?.length) {
                     return { content: "Sistemde satış siparişi bulunamadı.", data: null, ui_component: null };
                 }
 
+                const customerField = getField('salesOrders', 'customer');
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
                     siparis: getValue(r, 'salesOrders', 'name'),
-                    musteri: getValue(r, 'salesOrders', 'customer'),
+                    musteri: r[`${customerField}_display`] || getValue(r, 'salesOrders', 'customer'),
                     tutar: getNumericValue(r, 'salesOrders', 'totalAmount').toLocaleString('tr-TR', { maximumFractionDigits: 2 }),
                     durum: STATE_LABELS[getRawValue(r, 'salesOrders', 'status')] || getValue(r, 'salesOrders', 'status'),
                     tarih: getValue(r, 'salesOrders', 'date')
@@ -289,15 +290,9 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
                 return {
                     content:
                         `## 💼 Satış Departmanı Özeti\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Sipariş | **${totalOrders}** |\n` +
-                        `| Onaylı Satış | **${confirmedOrders}** |\n` +
-                        `| Taslak Teklif | **${draftOrders}** |\n` +
-                        `| İptal Edilen | **${cancelledOrders}** |\n` +
-                        `| Toplam Gelir | **${totalRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Ort. Sipariş Tutarı | **${avgOrder.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| En Yüksek Sipariş | **${maxOrder.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| En Düşük Sipariş | **${minOrder.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n\n` +
+                        `Toplam **${totalOrders}** sipariş: **${confirmedOrders}** onaylı, **${draftOrders}** taslak, **${cancelledOrders}** iptal.\n` +
+                        `Toplam gelir **${totalRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**, ortalama sipariş **${avgOrder.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**.\n` +
+                        `En yüksek sipariş **${maxOrder.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**, en düşük **${minOrder.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**.\n` +
                         `Onay oranı: **%${totalOrders ? ((confirmedOrders / totalOrders) * 100).toFixed(1) : 0}**`,
                     data: { totalOrders, confirmedOrders, draftOrders, cancelledOrders, totalRevenue, avgOrder },
                     ui_component: null
@@ -332,12 +327,8 @@ async function executeSalesAction(intent: SalesIntent, userQuery: string, search
 
                 return {
                     content:
-                        `## 👥 Müşteri Portföyü\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Müşteri | **${data.length}** |\n` +
-                        `| Şirket | **${companyCount}** |\n` +
-                        `| Bireysel | **${individualCount}** |\n` +
-                        `| En Yoğun Şehir | **${topCity ? `${topCity[0]} (${topCity[1]})` : '-'}** |\n`,
+                        `## 👥 Müşteri Listesi\n\n` +
+                        `Toplam **${data.length}** müşteri listelendi.`,
                     data: tableData,
                     ui_component: 'table'
                 };

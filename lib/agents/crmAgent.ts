@@ -14,7 +14,7 @@
  * - stage_analysis: Aşama bazlı analiz (chart)
  */
 
-import { searchData, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
+import { searchData, searchDataWithRelations, countData, getTables, getFields, getValue, getNumericValue, getField, getConnectionLabel, getConnectionErrorMessage, getRawValue } from "@/lib/dataAccess";
 import { buildWriteConfirmationResponse } from "@/lib/utils/writeConfirmationHelper";
 import { withRetry, withTimeout } from "@/lib/utils/errorHandling";
 import { extractWriteData } from "@/lib/utils/writeHelper";
@@ -149,17 +149,18 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
     try {
         switch (intent) {
             case "opportunity_list": {
-                const data = await searchData(getTables().crmLeads, [], getLeadFields(), 50, `${getField('crmLeads', 'probability')} DESC`);
+                const data = await searchDataWithRelations(getTables().crmLeads, [], getLeadFields(), 50, `${getField('crmLeads', 'probability')} DESC`);
                 if (!data?.length) {
                     return { content: "Sistemde CRM fırsatı bulunamadı.", data: null, ui_component: null };
                 }
 
                 const totalRevenue = data.reduce((s: number, r: any) => s + getNumericValue(r, 'crmLeads', 'expectedRevenue'), 0);
+                const crmCustomerField = getField('crmLeads', 'customer');
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
                     firsat: getValue(r, 'crmLeads', 'name'),
-                    musteri: getValue(r, 'crmLeads', 'customer'),
+                    musteri: r[`${crmCustomerField}_display`] || getValue(r, 'crmLeads', 'customer'),
                     asama: getValue(r, 'crmLeads', 'stage'),
                     olasilik: `%${getNumericValue(r, 'crmLeads', 'probability')}`,
                     beklenen_gelir: getNumericValue(r, 'crmLeads', 'expectedRevenue').toLocaleString('tr-TR', { maximumFractionDigits: 2 })
@@ -210,15 +211,9 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
                 return {
                     content:
                         `## 📈 CRM Departmanı Özeti\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Fırsat | **${totalLeads}** |\n` +
-                        `| Açık Fırsat | **${open.length}** |\n` +
-                        `| Kazanılan | **${won.length}** |\n` +
-                        `| Kaybedilen / Soğuk | **${lost.length}** |\n` +
-                        `| Kazanma Oranı | **%${winRate}** |\n` +
-                        `| Ort. Olasılık (Açık) | **%${avgProbability.toFixed(1)}** |\n` +
-                        `| Beklenen Gelir (Açık) | **${totalExpectedRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Kazanılan Gelir | **${wonRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n\n` +
+                        `Toplam **${totalLeads}** fırsat: **${open.length}** açık, **${won.length}** kazanılan, **${lost.length}** kaybedilen.\n` +
+                        `Kazanma oranı **%${winRate}**, ortalama olasılık **%${avgProbability.toFixed(1)}**.\n` +
+                        `Beklenen gelir **${totalExpectedRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**, kazanılan **${wonRevenue.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**.\n\n` +
                         `**Aşama Dağılımı (Top 5):**\n${stageLines}`,
                     data: { totalLeads, openCount: open.length, wonCount: won.length, lostCount: lost.length, totalExpectedRevenue, wonRevenue },
                     ui_component: null
@@ -226,7 +221,7 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
             }
 
             case "open_opportunities": {
-                const data = await searchData(
+                const data = await searchDataWithRelations(
                     getTables().crmLeads, [[getField('crmLeads', 'probability'), ">", 0], [getField('crmLeads', 'probability'), "<", 100]], getLeadFields(), 50, `${getField('crmLeads', 'probability')} DESC`
                 );
                 if (!data?.length) {
@@ -234,11 +229,12 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
                 }
 
                 const totalRevenue = data.reduce((s: number, r: any) => s + getNumericValue(r, 'crmLeads', 'expectedRevenue'), 0);
+                const openCrmCustomerField = getField('crmLeads', 'customer');
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
                     firsat: getValue(r, 'crmLeads', 'name'),
-                    musteri: getValue(r, 'crmLeads', 'customer'),
+                    musteri: r[`${openCrmCustomerField}_display`] || getValue(r, 'crmLeads', 'customer'),
                     asama: getValue(r, 'crmLeads', 'stage'),
                     olasilik: `%${getNumericValue(r, 'crmLeads', 'probability')}`,
                     beklenen_gelir: getNumericValue(r, 'crmLeads', 'expectedRevenue').toLocaleString('tr-TR', { maximumFractionDigits: 2 })
@@ -255,7 +251,7 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
             }
 
             case "won_opportunities": {
-                const data = await searchData(
+                const data = await searchDataWithRelations(
                     getTables().crmLeads, [[getField('crmLeads', 'probability'), ">=", 100]], getLeadFields(), 50, `${getField('crmLeads', 'expectedRevenue')} DESC`
                 );
                 if (!data?.length) {
@@ -263,11 +259,12 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
                 }
 
                 const totalRevenue = data.reduce((s: number, r: any) => s + getNumericValue(r, 'crmLeads', 'expectedRevenue'), 0);
+                const wonCrmCustomerField = getField('crmLeads', 'customer');
 
                 const tableData = data.map((r: any, i: number) => ({
                     sira: i + 1,
                     firsat: getValue(r, 'crmLeads', 'name'),
-                    musteri: getValue(r, 'crmLeads', 'customer'),
+                    musteri: r[`${wonCrmCustomerField}_display`] || getValue(r, 'crmLeads', 'customer'),
                     kazanilan_gelir: getNumericValue(r, 'crmLeads', 'expectedRevenue').toLocaleString('tr-TR', { maximumFractionDigits: 2 })
                 }));
 
@@ -355,11 +352,8 @@ async function executeCrmAction(intent: CrmIntent, userQuery: string, writeEnabl
                 return {
                     content:
                         `## 💰 CRM Beklenen Gelir Analizi\n\n` +
-                        `| Metrik | Değer |\n|--------|-------|\n` +
-                        `| Toplam Beklenen Gelir | **${rawTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Ağırlıklı Gelir Tahmini | **${weightedTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** |\n` +
-                        `| Açık Fırsat Sayısı | **${leads.length}** |\n\n` +
-                        `Ağırlıklı gelir = beklenen gelir x olasılık oranı`,
+                        `**${leads.length}** açık fırsatta toplam beklenen gelir **${rawTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺**.\n` +
+                        `Ağırlıklı gelir tahmini: **${weightedTotal.toLocaleString('tr-TR', { maximumFractionDigits: 2 })} ₺** (beklenen gelir x olasılık oranı).`,
                     data: chartData,
                     ui_component: 'chart'
                 };
