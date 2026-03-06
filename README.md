@@ -195,21 +195,6 @@ Open `http://localhost:3000` in your browser.
 
 ---
 
-## 📈 Roadmap
-
-- [x] **Multi-Agent Collaboration**: Agents work in parallel for cross-departmental queries.
-- [x] **Write Operations with Confirmation**: Create & update records across all modules with two-step approval.
-- [x] **ERPO Analytics Platform**: Advanced forecasting, anomaly detection, and customer segmentation.
-- [x] **Universal Database Support**: Connect to any database (Odoo, PostgreSQL, MySQL, MSSQL, SQLite).
-- [x] **LLM-First Schema Mapping**: AI-powered automatic table/column mapping for any naming convention.
-- [x] **Multi-Hop FK Resolution**: Cross-table foreign key chain resolution via BFS pathfinding.
-- [x] **Persistent Schema Mappings**: Mappings survive server restarts via disk persistence.
-- [ ] **Voice Interaction**: Integration with Whisper for voice-to-command functionality.
-- [ ] **Custom Agent Creation Tool**: A UI to build your own specialized agents for custom modules.
-- [ ] **Webhook & Notification System**: Real-time alerts for critical ERP events.
-
----
-
 ## 🤝 Contribution
 
 Contributions are what make the open-source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
